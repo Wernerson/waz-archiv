@@ -91,6 +91,30 @@
   }
 }
 
+.result-card--clickable {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 16px;
+  margin: 0 -16px;
+  transition: background 0.15s;
+
+  &:hover {
+    background: var(--accent-bg);
+  }
+}
+
+.open-hint {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.result-card--clickable:hover .open-hint {
+  opacity: 1;
+}
+
 .result-meta {
   display: flex;
   align-items: center;

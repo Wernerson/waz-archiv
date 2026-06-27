@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import './App.css'
+import PdfViewer from './PdfViewer'
 
 interface Source {
   title: string
@@ -15,6 +16,12 @@ interface Hit {
   _score: number
   _source: Source
   highlight?: { text?: string[]; title?: string[] }
+}
+
+interface ViewerState {
+  filename: string
+  startPage: number
+  title: string
 }
 
 async function searchArticles(query: string): Promise<{ hits: Hit[]; total: number }> {
@@ -58,6 +65,7 @@ export default function App() {
   const [total, setTotal] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [viewer, setViewer] = useState<ViewerState | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   async function handleSearch(e: React.FormEvent) {
@@ -77,6 +85,11 @@ export default function App() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function openViewer(src: Source) {
+    if (!src.issue_filename || src.page_start == null) return
+    setViewer({ filename: src.issue_filename, startPage: src.page_start, title: src.title })
   }
 
   return (
@@ -115,16 +128,27 @@ export default function App() {
           const src = hit._source
           const snippet = hit.highlight?.text?.[0] ?? hit.highlight?.title?.[0] ?? ''
           const titleHtml = hit.highlight?.title?.[0] ?? src.title
+          const clickable = !!(src.issue_filename && src.page_start != null)
 
           return (
-            <article key={hit._id} className="result-card">
+            <article
+              key={hit._id}
+              className={`result-card${clickable ? ' result-card--clickable' : ''}`}
+              onClick={clickable ? () => openViewer(src) : undefined}
+              role={clickable ? 'button' : undefined}
+              tabIndex={clickable ? 0 : undefined}
+              onKeyDown={clickable ? (e) => e.key === 'Enter' && openViewer(src) : undefined}
+            >
               <div className="result-meta">
-                <span className={`badge ${src.type}`}>{src.type === 'advertisement' ? 'Anzeige' : 'Artikel'}</span>
+                <span className={`badge ${src.type}`}>
+                  {src.type === 'advertisement' ? 'Anzeige' : 'Artikel'}
+                </span>
                 <span className="issue-info">
                   {formatDate(src.issue_date)}
                   {src.issue_filename && ` · ${src.issue_filename}`}
                   {src.page_start != null && ` · S. ${src.page_start}${src.page_end !== src.page_start ? `–${src.page_end}` : ''}`}
                 </span>
+                {clickable && <span className="open-hint">PDF öffnen →</span>}
               </div>
               <h2
                 className="result-title"
@@ -140,6 +164,15 @@ export default function App() {
           )
         })}
       </main>
+
+      {viewer && (
+        <PdfViewer
+          filename={viewer.filename}
+          startPage={viewer.startPage}
+          title={viewer.title}
+          onClose={() => setViewer(null)}
+        />
+      )}
     </div>
   )
 }
