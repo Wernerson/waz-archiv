@@ -1,1 +1,7 @@
 .idea
+pdfs/
+.env
+__pycache__/
+*.pyc
+.venv/
+.uv/
