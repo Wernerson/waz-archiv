@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import './App.css'
+import IssuesBrowser from './IssuesBrowser'
 import PdfViewer from './PdfViewer'
 
 interface Source {
@@ -68,10 +69,15 @@ export default function App() {
   const [viewer, setViewer] = useState<ViewerState | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const showBrowser = total === null && !loading
+
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault()
     const q = query.trim()
-    if (!q) return
+    if (!q) {
+      resetSearch()
+      return
+    }
     setLoading(true)
     setError(null)
     try {
@@ -87,9 +93,22 @@ export default function App() {
     }
   }
 
-  function openViewer(src: Source) {
+  function resetSearch() {
+    setQuery('')
+    setHits([])
+    setTotal(null)
+    setError(null)
+    inputRef.current?.focus()
+  }
+
+  function openViewer(filename: string, title: string, startPage = 1) {
+    if (!filename) return
+    setViewer({ filename, startPage, title })
+  }
+
+  function openArticle(src: Source) {
     if (!src.issue_filename || src.page_start == null) return
-    setViewer({ filename: src.issue_filename, startPage: src.page_start, title: src.title })
+    openViewer(src.issue_filename, src.title, src.page_start)
   }
 
   return (
@@ -111,59 +130,68 @@ export default function App() {
             {loading ? '…' : 'Suchen'}
           </button>
         </form>
+        {!showBrowser && (
+          <button className="back-btn" onClick={resetSearch}>
+            ← Alle Ausgaben
+          </button>
+        )}
       </header>
 
-      <main className="results">
-        {error && <p className="error">{error}</p>}
+      {showBrowser ? (
+        <IssuesBrowser onOpen={(filename, title) => openViewer(filename, title)} />
+      ) : (
+        <main className="results">
+          {error && <p className="error">{error}</p>}
 
-        {total !== null && !loading && (
-          <p className="result-count">
-            {total === 0
-              ? 'Keine Ergebnisse gefunden.'
-              : `${total.toLocaleString()} Treffer`}
-          </p>
-        )}
+          {total !== null && !loading && (
+            <p className="result-count">
+              {total === 0
+                ? 'Keine Ergebnisse gefunden.'
+                : `${total.toLocaleString()} Treffer`}
+            </p>
+          )}
 
-        {hits.map((hit) => {
-          const src = hit._source
-          const snippet = hit.highlight?.text?.[0] ?? hit.highlight?.title?.[0] ?? ''
-          const titleHtml = hit.highlight?.title?.[0] ?? src.title
-          const clickable = !!(src.issue_filename && src.page_start != null)
+          {hits.map((hit) => {
+            const src = hit._source
+            const snippet = hit.highlight?.text?.[0] ?? hit.highlight?.title?.[0] ?? ''
+            const titleHtml = hit.highlight?.title?.[0] ?? src.title
+            const clickable = !!(src.issue_filename && src.page_start != null)
 
-          return (
-            <article
-              key={hit._id}
-              className={`result-card${clickable ? ' result-card--clickable' : ''}`}
-              onClick={clickable ? () => openViewer(src) : undefined}
-              role={clickable ? 'button' : undefined}
-              tabIndex={clickable ? 0 : undefined}
-              onKeyDown={clickable ? (e) => e.key === 'Enter' && openViewer(src) : undefined}
-            >
-              <div className="result-meta">
-                <span className={`badge ${src.type}`}>
-                  {src.type === 'advertisement' ? 'Anzeige' : 'Artikel'}
-                </span>
-                <span className="issue-info">
-                  {formatDate(src.issue_date)}
-                  {src.issue_filename && ` · ${src.issue_filename}`}
-                  {src.page_start != null && ` · S. ${src.page_start}${src.page_end !== src.page_start ? `–${src.page_end}` : ''}`}
-                </span>
-                {clickable && <span className="open-hint">PDF öffnen →</span>}
-              </div>
-              <h2
-                className="result-title"
-                dangerouslySetInnerHTML={{ __html: titleHtml }}
-              />
-              {snippet && (
-                <p
-                  className="result-snippet"
-                  dangerouslySetInnerHTML={{ __html: `…${snippet}…` }}
+            return (
+              <article
+                key={hit._id}
+                className={`result-card${clickable ? ' result-card--clickable' : ''}`}
+                onClick={clickable ? () => openArticle(src) : undefined}
+                role={clickable ? 'button' : undefined}
+                tabIndex={clickable ? 0 : undefined}
+                onKeyDown={clickable ? (e) => e.key === 'Enter' && openArticle(src) : undefined}
+              >
+                <div className="result-meta">
+                  <span className={`badge ${src.type}`}>
+                    {src.type === 'advertisement' ? 'Anzeige' : 'Artikel'}
+                  </span>
+                  <span className="issue-info">
+                    {formatDate(src.issue_date)}
+                    {src.issue_filename && ` · ${src.issue_filename}`}
+                    {src.page_start != null && ` · S. ${src.page_start}${src.page_end !== src.page_start ? `–${src.page_end}` : ''}`}
+                  </span>
+                  {clickable && <span className="open-hint">PDF öffnen →</span>}
+                </div>
+                <h2
+                  className="result-title"
+                  dangerouslySetInnerHTML={{ __html: titleHtml }}
                 />
-              )}
-            </article>
-          )
-        })}
-      </main>
+                {snippet && (
+                  <p
+                    className="result-snippet"
+                    dangerouslySetInnerHTML={{ __html: `…${snippet}…` }}
+                  />
+                )}
+              </article>
+            )
+          })}
+        </main>
+      )}
 
       {viewer && (
         <PdfViewer

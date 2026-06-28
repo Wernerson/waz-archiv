@@ -1,0 +1,139 @@
+.browser {
+  display: grid;
+  grid-template-columns: 1fr 68px;
+  gap: 32px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 32px 80px;
+}
+
+.browser-main {
+  min-width: 0;
+}
+
+/* Year sections */
+.year-section {
+  scroll-margin-top: 16px;
+}
+
+.year-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 40px 0 20px;
+}
+
+.year-section:first-child .year-divider {
+  margin-top: 0;
+}
+
+.year-heading {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-h);
+  white-space: nowrap;
+}
+
+.year-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Issue grid */
+.issue-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 20px;
+}
+
+.issue-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Thumbnail */
+.issue-thumb {
+  aspect-ratio: 1 / 1.414;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--code-bg);
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.issue-thumb:hover,
+.issue-thumb:focus-visible {
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow);
+  outline: none;
+}
+
+/* Make react-pdf canvas fill the container */
+.issue-thumb .react-pdf__Page {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.issue-thumb canvas {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+}
+
+.thumb-error {
+  color: var(--text);
+  font-size: 1.4rem;
+}
+
+.issue-label {
+  font-size: 0.82rem;
+  color: var(--text);
+  text-align: center;
+}
+
+/* Year nav sidebar */
+.year-nav {
+  position: sticky;
+  top: 24px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.year-nav-btn {
+  background: none;
+  border: none;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+  font-family: var(--sans);
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: right;
+  white-space: nowrap;
+  transition: color 0.12s, background 0.12s;
+
+  &:hover {
+    color: var(--accent);
+    background: var(--accent-bg);
+  }
+}
+
+/* Loading / error state */
+.browser-status {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text);
+  margin: 0;
+}
+
+.browser-status--error {
+  color: #c0392b;
+}
