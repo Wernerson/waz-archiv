@@ -192,12 +192,17 @@ export default function App() {
     setEndYear(clamped)
   }
 
+  function resetYearFilter() {
+    setStartYear(yearBounds.min)
+    setEndYear(yearBounds.max)
+  }
+
   return (
     <div className="app">
       <header className="header">
         <div className="header-inner">
           <h1>WAZ Archiv</h1>
-          <p className="subtitle">Durchsuche 30 Jahre Ausgaben</p>
+          <p className="subtitle">Durchsuche {yearBounds.max - yearBounds.min} Jahre Walder Zeitschrift!</p>
           <form className="search-form" onSubmit={handleSearch}>
             <input
               ref={inputRef}
@@ -224,9 +229,19 @@ export default function App() {
             <div className="filters-panel">
               <div className="filters-header">
                 <span>Zeitraum</span>
-                <span className="filters-value">
-                  {startYear}–{endYear}
-                </span>
+                <div className="filters-actions">
+                  <span className="filters-value">
+                    {startYear}–{endYear}
+                  </span>
+                  <button
+                    type="button"
+                    className="filters-reset-btn"
+                    onClick={resetYearFilter}
+                    disabled={startYear === yearBounds.min && endYear === yearBounds.max}
+                  >
+                    Zurücksetzen
+                  </button>
+                </div>
               </div>
               <div className="year-range-slider" aria-label="Jahresbereich auswählen">
                 <div className="year-range-track" />

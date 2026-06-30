@@ -74,8 +74,35 @@
   font-size: 0.86rem;
 }
 
+.filters-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .filters-value {
   font-weight: 600;
+}
+
+.filters-reset-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.95);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 0.75rem;
+  font-family: var(--sans);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
 }
 
 .year-range-slider {
