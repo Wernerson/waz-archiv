@@ -13,13 +13,26 @@ interface Issue {
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
-async function fetchIssues(): Promise<Issue[]> {
+async function fetchIssues(startYear: number, endYear: number): Promise<Issue[]> {
   const res = await fetch('/opensearch/articles/_search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       size: 500,
-      query: { match_all: {} },
+      query: {
+        bool: {
+          filter: [
+            {
+              range: {
+                issue_year: {
+                  gte: startYear,
+                  lte: endYear,
+                },
+              },
+            },
+          ],
+        },
+      },
       collapse: { field: 'issue_id' },
       sort: [{ issue_date: 'desc' }],
       _source: ['issue_id', 'issue_filename', 'issue_date', 'issue_year', 'issue_number'],
@@ -88,11 +101,13 @@ export default function IssuesBrowser({ startYear, endYear, onOpen }: Props) {
   const sectionRefs = useRef(new Map<number, HTMLElement>())
 
   useEffect(() => {
-    fetchIssues()
+    setLoading(true)
+    setError(null)
+    fetchIssues(startYear, endYear)
       .then(setIssues)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [])
+  }, [startYear, endYear])
 
   if (loading) return <p className="browser-status">Lade Ausgaben…</p>
   if (error)   return <p className="browser-status browser-status--error">{error}</p>
