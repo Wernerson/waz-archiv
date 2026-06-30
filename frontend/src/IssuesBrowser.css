@@ -135,5 +135,5 @@
 }
 
 .browser-status--error {
-  color: #c0392b;
+  color: var(--accent);
 }

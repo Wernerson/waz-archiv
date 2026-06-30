@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import IssuesBrowser from './IssuesBrowser'
 import PdfViewer from './PdfViewer'
@@ -25,16 +25,44 @@ interface ViewerState {
   title: string
 }
 
-async function searchArticles(query: string): Promise<{ hits: Hit[]; total: number }> {
+interface YearBounds {
+  min: number
+  max: number
+}
+
+const CURRENT_YEAR = new Date().getFullYear()
+const FALLBACK_YEAR_BOUNDS: YearBounds = { min: CURRENT_YEAR - 30, max: CURRENT_YEAR }
+
+async function searchArticles(
+  query: string,
+  startYear: number,
+  endYear: number,
+): Promise<{ hits: Hit[]; total: number }> {
   const res = await fetch('/opensearch/articles/_search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       query: {
-        multi_match: {
-          query,
-          fields: ['title^3', 'text'],
-          type: 'best_fields',
+        bool: {
+          must: [
+            {
+              multi_match: {
+                query,
+                fields: ['title^3', 'text'],
+                type: 'best_fields',
+              },
+            },
+          ],
+          filter: [
+            {
+              range: {
+                issue_year: {
+                  gte: startYear,
+                  lte: endYear,
+                },
+              },
+            },
+          ],
         },
       },
       highlight: {
@@ -54,6 +82,29 @@ async function searchArticles(query: string): Promise<{ hits: Hit[]; total: numb
   return { hits: data.hits.hits, total: data.hits.total.value }
 }
 
+async function fetchYearBounds(): Promise<YearBounds> {
+  const res = await fetch('/opensearch/articles/_search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      size: 0,
+      aggs: {
+        min_year: { min: { field: 'issue_year' } },
+        max_year: { max: { field: 'issue_year' } },
+      },
+    }),
+  })
+
+  if (!res.ok) throw new Error(`OpenSearch error: ${res.status}`)
+  const data = await res.json()
+  const min = Math.floor(data.aggregations?.min_year?.value ?? NaN)
+  const max = Math.floor(data.aggregations?.max_year?.value ?? NaN)
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    throw new Error('Invalid year bounds')
+  }
+  return { min, max }
+}
+
 function formatDate(iso: string): string {
   if (!iso) return ''
   const [year, month] = iso.split('-')
@@ -67,9 +118,29 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [viewer, setViewer] = useState<ViewerState | null>(null)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [yearBounds, setYearBounds] = useState<YearBounds>(FALLBACK_YEAR_BOUNDS)
+  const [startYear, setStartYear] = useState(FALLBACK_YEAR_BOUNDS.min)
+  const [endYear, setEndYear] = useState(FALLBACK_YEAR_BOUNDS.max)
+  const [activeHandle, setActiveHandle] = useState<'start' | 'end' | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const showBrowser = total === null && !loading
+  const yearSpan = Math.max(1, yearBounds.max - yearBounds.min)
+  const startPercent = ((startYear - yearBounds.min) / yearSpan) * 100
+  const endPercent = ((endYear - yearBounds.min) / yearSpan) * 100
+
+  useEffect(() => {
+    fetchYearBounds()
+      .then((bounds) => {
+        setYearBounds(bounds)
+        setStartYear(bounds.min)
+        setEndYear(bounds.max)
+      })
+      .catch((err) => {
+        console.error('Failed to load year bounds', err)
+      })
+  }, [])
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault()
@@ -81,7 +152,7 @@ export default function App() {
     setLoading(true)
     setError(null)
     try {
-      const result = await searchArticles(q)
+      const result = await searchArticles(q, startYear, endYear)
       setHits(result.hits)
       setTotal(result.total)
     } catch (err) {
@@ -111,34 +182,106 @@ export default function App() {
     openViewer(src.issue_filename, src.title, src.page_start)
   }
 
+  function handleStartYearChange(value: number) {
+    const clamped = Math.max(yearBounds.min, Math.min(value, endYear))
+    setStartYear(clamped)
+  }
+
+  function handleEndYearChange(value: number) {
+    const clamped = Math.min(yearBounds.max, Math.max(value, startYear))
+    setEndYear(clamped)
+  }
+
   return (
     <div className="app">
       <header className="header">
-        <h1>WAZ Archiv</h1>
-        <p className="subtitle">Durchsuche 30 Jahre Ausgaben</p>
-        <form className="search-form" onSubmit={handleSearch}>
-          <input
-            ref={inputRef}
-            className="search-input"
-            type="search"
-            placeholder="Suchbegriff eingeben…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoFocus
-          />
-          <button className="search-btn" type="submit" disabled={loading}>
-            {loading ? '…' : 'Suchen'}
+        <div className="header-inner">
+          <h1>WAZ Archiv</h1>
+          <p className="subtitle">Durchsuche 30 Jahre Ausgaben</p>
+          <form className="search-form" onSubmit={handleSearch}>
+            <input
+              ref={inputRef}
+              className="search-input"
+              type="search"
+              placeholder="Suchbegriff eingeben…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              autoFocus
+            />
+            <button className="search-btn" type="submit" disabled={loading}>
+              {loading ? '…' : 'Suchen'}
+            </button>
+          </form>
+          <button
+            type="button"
+            className="filter-toggle"
+            onClick={() => setFiltersOpen((open) => !open)}
+            aria-expanded={filtersOpen}
+          >
+            {filtersOpen ? 'Filter ausblenden' : 'Filter anzeigen'}
           </button>
-        </form>
-        {!showBrowser && (
-          <button className="back-btn" onClick={resetSearch}>
-            ← Alle Ausgaben
-          </button>
-        )}
+          {filtersOpen && (
+            <div className="filters-panel">
+              <div className="filters-header">
+                <span>Zeitraum</span>
+                <span className="filters-value">
+                  {startYear}–{endYear}
+                </span>
+              </div>
+              <div className="year-range-slider" aria-label="Jahresbereich auswählen">
+                <div className="year-range-track" />
+                <div
+                  className="year-range-selection"
+                  style={{
+                    left: `calc(${startPercent}% + var(--year-thumb-radius))`,
+                    width: `calc(${Math.max(0, endPercent - startPercent)}% - (var(--year-thumb-radius) * 2))`,
+                  }}
+                />
+                <input
+                  id="year-start"
+                  className={`year-slider year-slider--start${activeHandle === 'start' ? ' is-active' : ''}`}
+                  type="range"
+                  min={yearBounds.min}
+                  max={yearBounds.max}
+                  value={startYear}
+                  onChange={(e) => handleStartYearChange(Number(e.target.value))}
+                  onPointerDown={() => setActiveHandle('start')}
+                  onPointerUp={() => setActiveHandle(null)}
+                  onPointerCancel={() => setActiveHandle(null)}
+                  onBlur={() => setActiveHandle(null)}
+                  aria-label="Startjahr"
+                />
+                <input
+                  id="year-end"
+                  className={`year-slider year-slider--end${activeHandle === 'end' ? ' is-active' : ''}`}
+                  type="range"
+                  min={yearBounds.min}
+                  max={yearBounds.max}
+                  value={endYear}
+                  onChange={(e) => handleEndYearChange(Number(e.target.value))}
+                  onPointerDown={() => setActiveHandle('end')}
+                  onPointerUp={() => setActiveHandle(null)}
+                  onPointerCancel={() => setActiveHandle(null)}
+                  onBlur={() => setActiveHandle(null)}
+                  aria-label="Endjahr"
+                />
+              </div>
+            </div>
+          )}
+          {!showBrowser && (
+            <button className="back-btn" onClick={resetSearch}>
+              ← Alle Ausgaben
+            </button>
+          )}
+        </div>
       </header>
 
       {showBrowser ? (
-        <IssuesBrowser onOpen={(filename, title) => openViewer(filename, title)} />
+        <IssuesBrowser
+          startYear={startYear}
+          endYear={endYear}
+          onOpen={(filename, title) => openViewer(filename, title)}
+        />
       ) : (
         <main className="results">
           {error && <p className="error">{error}</p>}

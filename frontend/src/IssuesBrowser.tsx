@@ -76,10 +76,12 @@ function Thumbnail({ filename, onClick }: { filename: string; onClick: () => voi
 }
 
 interface Props {
+  startYear: number
+  endYear: number
   onOpen: (filename: string, title: string) => void
 }
 
-export default function IssuesBrowser({ onOpen }: Props) {
+export default function IssuesBrowser({ startYear, endYear, onOpen }: Props) {
   const [issues, setIssues] = useState<Issue[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -98,6 +100,7 @@ export default function IssuesBrowser({ onOpen }: Props) {
   // Group by year, Map preserves insertion order (newest first from the sort)
   const byYear = new Map<number, Issue[]>()
   for (const issue of issues) {
+    if (issue.issue_year < startYear || issue.issue_year > endYear) continue
     const group = byYear.get(issue.issue_year) ?? []
     group.push(issue)
     byYear.set(issue.issue_year, group)
