@@ -1,46 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { Document, Page } from 'react-pdf'
 import './IssuesBrowser.css'
-
-interface Issue {
-  issue_id: string
-  issue_filename: string
-  issue_date: string
-  issue_year: number
-  issue_number: number | null
-}
+import { listIssues, loadPages, type Issue } from './searchIndex'
 
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
 async function fetchIssues(startYear: number, endYear: number): Promise<Issue[]> {
-  const res = await fetch('/opensearch/articles/_search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      size: 500,
-      query: {
-        bool: {
-          filter: [
-            {
-              range: {
-                issue_year: {
-                  gte: startYear,
-                  lte: endYear,
-                },
-              },
-            },
-          ],
-        },
-      },
-      collapse: { field: 'issue_id' },
-      sort: [{ issue_date: 'desc' }],
-      _source: ['issue_id', 'issue_filename', 'issue_date', 'issue_year', 'issue_number'],
-    }),
-  })
-  if (!res.ok) throw new Error(`OpenSearch ${res.status}`)
-  const data = await res.json()
-  return data.hits.hits.map((h: { _source: Issue }) => h._source)
+  const pages = await loadPages()
+  return listIssues(pages).filter(
+    (issue) => issue.issue_year >= startYear && issue.issue_year <= endYear,
+  )
 }
 
 function Thumbnail({ filename, onClick }: { filename: string; onClick: () => void }) {

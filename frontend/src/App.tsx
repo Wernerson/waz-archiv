@@ -2,22 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import IssuesBrowser from './IssuesBrowser'
 import PdfViewer from './PdfViewer'
-
-interface Source {
-  title: string
-  type: string
-  issue_filename: string
-  issue_date: string
-  page_start: number
-  page_end: number
-}
-
-interface Hit {
-  _id: string
-  _score: number
-  _source: Source
-  highlight?: { text?: string[]; title?: string[] }
-}
+import { loadPages, searchPages, yearBounds, type SearchHit } from './searchIndex'
 
 interface ViewerState {
   filename: string
@@ -37,72 +22,13 @@ async function searchArticles(
   query: string,
   startYear: number,
   endYear: number,
-): Promise<{ hits: Hit[]; total: number }> {
-  const res = await fetch('/opensearch/articles/_search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query: {
-        bool: {
-          must: [
-            {
-              multi_match: {
-                query,
-                fields: ['title^3', 'text'],
-                type: 'best_fields',
-              },
-            },
-          ],
-          filter: [
-            {
-              range: {
-                issue_year: {
-                  gte: startYear,
-                  lte: endYear,
-                },
-              },
-            },
-          ],
-        },
-      },
-      highlight: {
-        fields: {
-          text: { fragment_size: 260, number_of_fragments: 1 },
-          title: {},
-        },
-        pre_tags: ['<mark>'],
-        post_tags: ['</mark>'],
-      },
-      _source: ['title', 'type', 'issue_filename', 'issue_date', 'page_start', 'page_end'],
-      size: 20,
-    }),
-  })
-  if (!res.ok) throw new Error(`OpenSearch error: ${res.status}`)
-  const data = await res.json()
-  return { hits: data.hits.hits, total: data.hits.total.value }
+): Promise<{ hits: SearchHit[]; total: number }> {
+  const pages = await loadPages()
+  return searchPages(pages, query, startYear, endYear)
 }
 
 async function fetchYearBounds(): Promise<YearBounds> {
-  const res = await fetch('/opensearch/articles/_search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      size: 0,
-      aggs: {
-        min_year: { min: { field: 'issue_year' } },
-        max_year: { max: { field: 'issue_year' } },
-      },
-    }),
-  })
-
-  if (!res.ok) throw new Error(`OpenSearch error: ${res.status}`)
-  const data = await res.json()
-  const min = Math.floor(data.aggregations?.min_year?.value ?? NaN)
-  const max = Math.floor(data.aggregations?.max_year?.value ?? NaN)
-  if (!Number.isFinite(min) || !Number.isFinite(max)) {
-    throw new Error('Invalid year bounds')
-  }
-  return { min, max }
+  return yearBounds(await loadPages())
 }
 
 function formatDate(iso: string): string {
@@ -113,7 +39,7 @@ function formatDate(iso: string): string {
 
 export default function App() {
   const [query, setQuery] = useState('')
-  const [hits, setHits] = useState<Hit[]>([])
+  const [hits, setHits] = useState<SearchHit[]>([])
   const [total, setTotal] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -177,9 +103,8 @@ export default function App() {
     setViewer({ filename, startPage, title })
   }
 
-  function openArticle(src: Source) {
-    if (!src.issue_filename || src.page_start == null) return
-    openViewer(src.issue_filename, src.title, src.page_start)
+  function openArticle(hit: SearchHit) {
+    openViewer(hit.issue_filename, hit.displayTitle, hit.page)
   }
 
   function handleStartYearChange(value: number) {
@@ -309,45 +234,36 @@ export default function App() {
             </p>
           )}
 
-          {hits.map((hit) => {
-            const src = hit._source
-            const snippet = hit.highlight?.text?.[0] ?? hit.highlight?.title?.[0] ?? ''
-            const titleHtml = hit.highlight?.title?.[0] ?? src.title
-            const clickable = !!(src.issue_filename && src.page_start != null)
-
-            return (
-              <article
-                key={hit._id}
-                className={`result-card${clickable ? ' result-card--clickable' : ''}`}
-                onClick={clickable ? () => openArticle(src) : undefined}
-                role={clickable ? 'button' : undefined}
-                tabIndex={clickable ? 0 : undefined}
-                onKeyDown={clickable ? (e) => e.key === 'Enter' && openArticle(src) : undefined}
-              >
-                <div className="result-meta">
-                  <span className={`badge ${src.type}`}>
-                    {src.type === 'advertisement' ? 'Anzeige' : 'Artikel'}
-                  </span>
-                  <span className="issue-info">
-                    {formatDate(src.issue_date)}
-                    {src.issue_filename && ` · ${src.issue_filename}`}
-                    {src.page_start != null && ` · S. ${src.page_start}${src.page_end !== src.page_start ? `–${src.page_end}` : ''}`}
-                  </span>
-                  {clickable && <span className="open-hint">PDF öffnen →</span>}
-                </div>
-                <h2
-                  className="result-title"
-                  dangerouslySetInnerHTML={{ __html: titleHtml }}
+          {hits.map((hit) => (
+            <article
+              key={hit.id}
+              className="result-card result-card--clickable"
+              onClick={() => openArticle(hit)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => e.key === 'Enter' && openArticle(hit)}
+            >
+              <div className="result-meta">
+                <span className="badge article">Artikel</span>
+                <span className="issue-info">
+                  {formatDate(hit.issue_date)}
+                  {` · ${hit.issue_filename}`}
+                  {` · S. ${hit.page}`}
+                </span>
+                <span className="open-hint">PDF öffnen →</span>
+              </div>
+              <h2
+                className="result-title"
+                dangerouslySetInnerHTML={{ __html: hit.titleHtml }}
+              />
+              {hit.snippetHtml && (
+                <p
+                  className="result-snippet"
+                  dangerouslySetInnerHTML={{ __html: `…${hit.snippetHtml}…` }}
                 />
-                {snippet && (
-                  <p
-                    className="result-snippet"
-                    dangerouslySetInnerHTML={{ __html: `…${snippet}…` }}
-                  />
-                )}
-              </article>
-            )
-          })}
+              )}
+            </article>
+          ))}
         </main>
       )}
 
