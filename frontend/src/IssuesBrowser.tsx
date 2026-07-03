@@ -1,19 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { Document, Page } from 'react-pdf'
 import './IssuesBrowser.css'
-import { listIssues, loadPages, type Issue } from './searchIndex'
+import { listIssues, loadIssues, type Issue } from './searchIndex'
 
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
 async function fetchIssues(startYear: number, endYear: number): Promise<Issue[]> {
-  const pages = await loadPages()
-  return listIssues(pages).filter(
+  const issues = await loadIssues()
+  return listIssues(issues).filter(
     (issue) => issue.issue_year >= startYear && issue.issue_year <= endYear,
   )
 }
 
-function Thumbnail({ filename, onClick }: { filename: string; onClick: () => void }) {
+function Thumbnail({ file, onClick }: { file: string; onClick: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
   const [width, setWidth] = useState(0)
@@ -42,7 +42,7 @@ function Thumbnail({ filename, onClick }: { filename: string; onClick: () => voi
     >
       {visible && width > 0 && (
         <Document
-          file={`/pdfs/${filename}`}
+          file={file}
           loading={null}
           error={<span className="thumb-error">–</span>}
         >
@@ -61,7 +61,7 @@ function Thumbnail({ filename, onClick }: { filename: string; onClick: () => voi
 interface Props {
   startYear: number
   endYear: number
-  onOpen: (filename: string, title: string) => void
+  onOpen: (pdfPath: string, title: string) => void
 }
 
 export default function IssuesBrowser({ startYear, endYear, onOpen }: Props) {
@@ -119,8 +119,8 @@ export default function IssuesBrowser({ startYear, endYear, onOpen }: Props) {
                 return (
                   <div key={issue.issue_id} className="issue-card">
                     <Thumbnail
-                      filename={issue.issue_filename}
-                      onClick={() => onOpen(issue.issue_filename, label)}
+                      file={issue.pdf_path}
+                      onClick={() => onOpen(issue.pdf_path, label)}
                     />
                     <div className="issue-label">{label}</div>
                   </div>

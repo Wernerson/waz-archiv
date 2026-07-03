@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import IssuesBrowser from './IssuesBrowser'
 import PdfViewer from './PdfViewer'
-import { loadPages, searchPages, yearBounds, type SearchHit } from './searchIndex'
+import { loadIssues, searchPages, yearBounds, type SearchHit } from './searchIndex'
 
 interface ViewerState {
-  filename: string
+  pdfPath: string
   startPage: number
   title: string
 }
@@ -23,12 +23,12 @@ async function searchArticles(
   startYear: number,
   endYear: number,
 ): Promise<{ hits: SearchHit[]; total: number }> {
-  const pages = await loadPages()
-  return searchPages(pages, query, startYear, endYear)
+  const issues = await loadIssues()
+  return searchPages(issues, query, startYear, endYear)
 }
 
 async function fetchYearBounds(): Promise<YearBounds> {
-  return yearBounds(await loadPages())
+  return yearBounds(await loadIssues())
 }
 
 function formatDate(iso: string): string {
@@ -98,13 +98,13 @@ export default function App() {
     inputRef.current?.focus()
   }
 
-  function openViewer(filename: string, title: string, startPage = 1) {
-    if (!filename) return
-    setViewer({ filename, startPage, title })
+  function openViewer(pdfPath: string, title: string, startPage = 1) {
+    if (!pdfPath) return
+    setViewer({ pdfPath, startPage, title })
   }
 
   function openArticle(hit: SearchHit) {
-    openViewer(hit.issue_filename, hit.displayTitle, hit.page)
+    openViewer(hit.pdf_path, hit.displayTitle, hit.page)
   }
 
   function handleStartYearChange(value: number) {
@@ -220,7 +220,7 @@ export default function App() {
         <IssuesBrowser
           startYear={startYear}
           endYear={endYear}
-          onOpen={(filename, title) => openViewer(filename, title)}
+          onOpen={(pdfPath, title) => openViewer(pdfPath, title)}
         />
       ) : (
         <main className="results">
@@ -247,7 +247,7 @@ export default function App() {
                 <span className="badge article">Artikel</span>
                 <span className="issue-info">
                   {formatDate(hit.issue_date)}
-                  {` · ${hit.issue_filename}`}
+                  {` · ${hit.issue_title}`}
                   {` · S. ${hit.page}`}
                 </span>
                 <span className="open-hint">PDF öffnen →</span>
@@ -269,7 +269,7 @@ export default function App() {
 
       {viewer && (
         <PdfViewer
-          filename={viewer.filename}
+          file={viewer.pdfPath}
           startPage={viewer.startPage}
           title={viewer.title}
           onClose={() => setViewer(null)}

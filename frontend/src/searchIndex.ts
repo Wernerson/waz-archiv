@@ -1,25 +1,39 @@
 // Client-side search over the extracted magazine pages: downloads pages.json
 // once and answers all queries in memory — no search backend required.
+// PDFs are not hosted with the app; they load from waz-zh.ch via the
+// same-origin /Portals path (proxied in dev by vite, in prod by Nginx).
 
 export interface PageRecord {
-  issue_date: string // yyyy-MM-dd, day is always 01
   page: number
   title: string | null
   text: string
 }
 
+export interface IssueRecord {
+  title: string
+  number: string | null
+  date: string // yyyy-MM-dd (real release date)
+  url: string
+  pdf: string
+  pdf_url: string
+  toc: string[]
+  pages: PageRecord[]
+}
+
 export interface Issue {
   issue_id: string
-  issue_filename: string
+  pdf_path: string
+  issue_title: string
   issue_date: string
   issue_year: number
-  issue_number: number | null
+  issue_number: string | null
 }
 
 export interface SearchHit {
   id: string
   score: number
-  issue_filename: string
+  pdf_path: string
+  issue_title: string
   issue_date: string
   page: number
   displayTitle: string
@@ -31,44 +45,41 @@ export const RESULT_LIMIT = 20
 const SNIPPET_LENGTH = 260
 const TITLE_BOOST = 3
 
-let cached: Promise<PageRecord[]> | null = null
+let cached: Promise<IssueRecord[]> | null = null
 
-export function loadPages(): Promise<PageRecord[]> {
+export function loadIssues(): Promise<IssueRecord[]> {
   cached ??= fetch('/pages.json').then((res) => {
     if (!res.ok) throw new Error(`pages.json: HTTP ${res.status}`)
-    return res.json() as Promise<PageRecord[]>
+    return res.json() as Promise<IssueRecord[]>
   })
   return cached
 }
 
-export function issueFilename(issueDate: string): string {
-  const [year, month] = issueDate.split('-')
-  return `${year}_${month}.pdf`
+// Same-origin path of the PDF on waz-zh.ch (e.g. /Portals/0/Archiv/1992/….pdf);
+// the server proxies this prefix because waz-zh.ch sends no CORS headers.
+export function pdfPath(issue: IssueRecord): string {
+  return new URL(issue.pdf_url).pathname
 }
 
-export function listIssues(pages: PageRecord[]): Issue[] {
-  const byDate = new Map<string, Issue>()
-  for (const p of pages) {
-    if (!byDate.has(p.issue_date)) {
-      const [year, month] = p.issue_date.split('-')
-      byDate.set(p.issue_date, {
-        issue_id: p.issue_date,
-        issue_filename: issueFilename(p.issue_date),
-        issue_date: p.issue_date,
-        issue_year: parseInt(year, 10),
-        issue_number: parseInt(month, 10) || null,
-      })
-    }
-  }
-  return [...byDate.values()].sort((a, b) => b.issue_date.localeCompare(a.issue_date))
+export function listIssues(issues: IssueRecord[]): Issue[] {
+  return issues
+    .map((issue) => ({
+      issue_id: issue.url,
+      pdf_path: pdfPath(issue),
+      issue_title: issue.title,
+      issue_date: issue.date,
+      issue_year: parseInt(issue.date, 10),
+      issue_number: issue.number,
+    }))
+    .sort((a, b) => b.issue_date.localeCompare(a.issue_date))
 }
 
-export function yearBounds(pages: PageRecord[]): { min: number; max: number } {
-  if (!pages.length) throw new Error('pages.json is empty')
+export function yearBounds(issues: IssueRecord[]): { min: number; max: number } {
+  if (!issues.length) throw new Error('pages.json is empty')
   let min = Infinity
   let max = -Infinity
-  for (const p of pages) {
-    const year = parseInt(p.issue_date, 10)
+  for (const issue of issues) {
+    const year = parseInt(issue.date, 10)
     if (year < min) min = year
     if (year > max) max = year
   }
@@ -130,7 +141,7 @@ function makeSnippet(text: string, textLower: string, terms: string[]): string {
 }
 
 export function searchPages(
-  pages: PageRecord[],
+  issues: IssueRecord[],
   query: string,
   startYear: number,
   endYear: number,
@@ -139,35 +150,39 @@ export function searchPages(
   if (!terms.length) return { hits: [], total: 0 }
 
   const scored: SearchHit[] = []
-  for (const p of pages) {
-    const year = parseInt(p.issue_date, 10)
+  for (const issue of issues) {
+    const year = parseInt(issue.date, 10)
     if (year < startYear || year > endYear) continue
-    const textLower = p.text.toLowerCase()
-    const titleLower = (p.title ?? '').toLowerCase()
-    let score = 0
-    let matchesAll = true
-    for (const term of terms) {
-      const inTitle = countOccurrences(titleLower, term)
-      const inText = countOccurrences(textLower, term)
-      if (inTitle + inText === 0) {
-        matchesAll = false
-        break
+    const path = pdfPath(issue)
+    for (const p of issue.pages) {
+      const textLower = p.text.toLowerCase()
+      const titleLower = (p.title ?? '').toLowerCase()
+      let score = 0
+      let matchesAll = true
+      for (const term of terms) {
+        const inTitle = countOccurrences(titleLower, term)
+        const inText = countOccurrences(textLower, term)
+        if (inTitle + inText === 0) {
+          matchesAll = false
+          break
+        }
+        score += TITLE_BOOST * inTitle + inText
       }
-      score += TITLE_BOOST * inTitle + inText
-    }
-    if (!matchesAll) continue
+      if (!matchesAll) continue
 
-    const displayTitle = p.title ?? `Seite ${p.page}`
-    scored.push({
-      id: `${p.issue_date}#${p.page}`,
-      score,
-      issue_filename: issueFilename(p.issue_date),
-      issue_date: p.issue_date,
-      page: p.page,
-      displayTitle,
-      titleHtml: p.title ? highlight(p.title, terms) : escapeHtml(displayTitle),
-      snippetHtml: makeSnippet(p.text, textLower, terms),
-    })
+      const displayTitle = p.title ?? `Seite ${p.page}`
+      scored.push({
+        id: `${issue.url}#${p.page}`,
+        score,
+        pdf_path: path,
+        issue_title: issue.title,
+        issue_date: issue.date,
+        page: p.page,
+        displayTitle,
+        titleHtml: p.title ? highlight(p.title, terms) : escapeHtml(displayTitle),
+        snippetHtml: makeSnippet(p.text, textLower, terms),
+      })
+    }
   }
   scored.sort((a, b) => b.score - a.score)
   return { hits: scored.slice(0, RESULT_LIMIT), total: scored.length }

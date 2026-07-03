@@ -1,9 +1,7 @@
 import { createReadStream, statSync } from 'fs'
-import { join } from 'path'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
-const PDF_DIR = new URL('../pdfs', import.meta.url).pathname
 const PAGES_JSON = new URL('../pages.json', import.meta.url).pathname
 
 function serveFile(res: import('http').ServerResponse, file: string, contentType: string): boolean {
@@ -25,18 +23,24 @@ export default defineConfig({
   plugins: [
     react(),
     {
-      // Serve PDFs and the extracted pages.json from the repo root in dev.
-      // In production Nginx handles /pdfs/* and /pages.json.
+      // Serve the extracted pages.json from the repo root in dev.
+      // In production Nginx serves /pages.json.
       name: 'serve-archive-data',
       configureServer(server) {
-        server.middlewares.use('/pdfs', (req, res, next) => {
-          const file = join(PDF_DIR, decodeURIComponent(req.url ?? ''))
-          if (!serveFile(res, file, 'application/pdf')) next()
-        })
         server.middlewares.use('/pages.json', (_req, res, next) => {
           if (!serveFile(res, PAGES_JSON, 'application/json')) next()
         })
       },
     },
   ],
+  server: {
+    proxy: {
+      // PDFs stay on waz-zh.ch (no CORS there, so same-origin proxy).
+      // In production Nginx proxy_passes /Portals/ to https://www.waz-zh.ch.
+      '/Portals': {
+        target: 'https://www.waz-zh.ch',
+        changeOrigin: true,
+      },
+    },
+  },
 })

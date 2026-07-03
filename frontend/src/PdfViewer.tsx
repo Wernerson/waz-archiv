@@ -12,13 +12,13 @@ function toSpreadLeft(page: number): number {
 }
 
 interface Props {
-  filename: string
+  file: string
   startPage: number
   title: string
   onClose: () => void
 }
 
-export default function PdfViewer({ filename, startPage, title, onClose }: Props) {
+export default function PdfViewer({ file, startPage, title, onClose }: Props) {
   const [numPages, setNumPages]   = useState(0)
   const [left, setLeft]           = useState(() => toSpreadLeft(startPage))
   const [pageHeight, setPageHeight] = useState(0)
@@ -124,7 +124,7 @@ export default function PdfViewer({ filename, startPage, title, onClose }: Props
 
           <div className="document-wrap" ref={docWrapRef}>
             <Document
-              file={`/pdfs/${filename}`}
+              file={file}
               onLoadSuccess={({ numPages }) => setNumPages(numPages)}
               loading={<div className="viewer-status">Lade PDF…</div>}
               error={<div className="viewer-status">Fehler beim Laden.</div>}

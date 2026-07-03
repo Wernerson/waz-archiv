@@ -1,21 +1,31 @@
 """
-Page-level text extraction from magazine PDFs, skipping advertising pages.
+WAZ archive pipeline: scrape issue metadata from waz-zh.ch and extract page
+texts from the issue PDFs, skipping advertising pages.
 
 Usage:
-    uv run extract_pages.py
-    uv run extract_pages.py --pdf-dir ./pdfs/ --output pages.json
+    uv run extract_pages.py scrape             # metadata -> issues.json
+    uv run extract_pages.py extract            # PDFs (transient) -> pages.json
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import statistics
 import sys
+import tempfile
+import time
 from pathlib import Path
+from urllib.parse import unquote, urljoin, urlsplit
 
 import click
 import pdfplumber
+import requests
+from bs4 import BeautifulSoup
+
+ARCHIVE_URL = "https://www.waz-zh.ch/Archiv"
+USER_AGENT = "waz-archiv-indexer/0.1"
 
 # Contact/commerce vocabulary typical for ad blocks, incl. Swiss phone numbers.
 AD_KEYWORDS = re.compile(
@@ -31,17 +41,16 @@ TITLE_MAX_WORDS = 12
 TITLE_MIN_ALPHA_RATIO = 0.75
 TITLE_MAX_TOP = 0.72       # headings below this page fraction are ad/footer territory
 
-_FILENAME_PAT = re.compile(r"(\d{4})_(\d{1,2})\.pdf$", re.IGNORECASE)
+GERMAN_MONTHS = {
+    "januar": 1, "februar": 2, "märz": 3, "april": 4, "mai": 5, "juni": 6,
+    "juli": 7, "august": 8, "september": 9, "oktober": 10, "november": 11,
+    "dezember": 12,
+}
 
 
-def parse_issue_date(filename: str) -> str:
-    """1993_06.pdf -> 1993-06-01 (second field is the issue number)."""
-    m = _FILENAME_PAT.search(filename)
-    if not m:
-        raise ValueError(f"cannot parse issue date from filename: {filename}")
-    year, number = m.groups()
-    return f"{year}-{int(number):02d}-01"
-
+# ---------------------------------------------------------------------------
+# Page extraction (ad filter + title heuristic)
+# ---------------------------------------------------------------------------
 
 def is_ad_page(text: str) -> bool:
     # "ANZEIGEN" section header, printed letter-spaced ("A N Z E I G E N")
@@ -172,43 +181,254 @@ def extract_title(page) -> str | None:
     return None
 
 
-@click.command()
-@click.option("--pdf-dir", type=click.Path(exists=True, file_okay=False, path_type=Path),
-              default="pdfs", show_default=True, help="Directory containing the issue PDFs.")
-@click.option("--output", type=click.Path(dir_okay=False, path_type=Path),
-              default="pages.json", show_default=True, help="JSON file to write.")
-def extract(pdf_dir: Path, output: Path) -> None:
-    """Extract page texts from all PDFs in PDF_DIR, dropping advertising pages."""
-    pdf_paths = sorted(pdf_dir.glob("*.pdf"))
-    if not pdf_paths:
-        click.echo(f"no PDFs found in {pdf_dir}", err=True)
-        sys.exit(1)
+def extract_issue_pages(pdf_path: Path) -> tuple[list[dict], list[int]]:
+    """Extract non-ad pages from one PDF; returns (page records, skipped page numbers)."""
+    records: list[dict] = []
+    skipped: list[int] = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            if is_ad_page(text):
+                skipped.append(page.page_number)
+                continue
+            records.append({
+                "page": page.page_number,
+                "title": extract_title(page),
+                "text": text,
+            })
+    return records, skipped
+
+
+# ---------------------------------------------------------------------------
+# Website scraping
+# ---------------------------------------------------------------------------
+
+def make_session() -> requests.Session:
+    session = requests.Session()
+    session.headers["User-Agent"] = USER_AGENT
+    return session
+
+
+def fetch_html(session: requests.Session, url: str, delay: float) -> BeautifulSoup:
+    last_err: Exception | None = None
+    for attempt in (1, 2, 3):
+        time.sleep(delay * attempt)
+        try:
+            res = session.get(url, timeout=30)
+            res.raise_for_status()
+            # the server occasionally returns truncated pages; detect and retry
+            if "</html>" not in res.text[-500:]:
+                raise ValueError("truncated response")
+            return BeautifulSoup(res.text, "html.parser")
+        except (requests.RequestException, ValueError) as err:
+            last_err = err
+            click.echo(f"WARN {url} (attempt {attempt}): {err}", err=True)
+    raise last_err  # type: ignore[misc]
+
+
+def parse_german_date(text: str) -> str:
+    """'Dienstag, 1. Dezember 1992' -> '1992-12-01'."""
+    m = re.search(r"(\d{1,2})\.\s*([A-Za-zÄÖÜäöü]+)\s+(\d{4})", text)
+    if not m:
+        raise ValueError(f"cannot parse date: {text!r}")
+    day, month_name, year = m.groups()
+    month = GERMAN_MONTHS[month_name.lower()]
+    return f"{year}-{month:02d}-{int(day):02d}"
+
+
+def local_pdf_name(pdf_url: str) -> str:
+    """URL -> filesystem-friendly basename (query stripped, spaces -> _)."""
+    path = urlsplit(pdf_url).path
+    return unquote(path.rsplit("/", 1)[-1]).replace(" ", "_")
+
+
+def parse_issue_page(soup: BeautifulSoup, url: str) -> dict:
+    title_el = soup.select_one("h3.edn_articleTitle")
+    if not title_el:
+        raise ValueError("no edn_articleTitle")
+    title = title_el.get_text(strip=True)
+    number_m = re.match(r"WAZ\s+(\S+)", title)
+
+    time_el = soup.select_one(".edn_metaDetails time")
+    if not time_el:
+        raise ValueError("no <time> element")
+    date = parse_german_date(time_el.get_text(strip=True))
+
+    summary = soup.select_one(".edn_articleSummary")
+    toc = []
+    pdf_link = None
+    if summary:
+        toc = [
+            re.sub(r"\s+", " ", li.get_text(" ", strip=True)).strip()
+            for li in summary.select("li")
+        ]
+        toc = [t for t in toc if t]
+        pdf_link = summary.select_one("a.pdflink") or summary.select_one('a[href*=".pdf"]')
+    if pdf_link is None:
+        pdf_link = soup.select_one('a.pdflink, a[href*=".pdf"]')
+    if pdf_link is None:
+        raise ValueError("no PDF link")
+    pdf_url = requests.utils.requote_uri(urljoin(url, pdf_link["href"].strip()))
+
+    return {
+        "title": title,
+        "number": number_m.group(1) if number_m else None,
+        "date": date,
+        "url": url,
+        "pdf": local_pdf_name(pdf_url),
+        "pdf_url": pdf_url,
+        "toc": toc,
+    }
+
+
+def collect_issue_urls(session: requests.Session, delay: float) -> list[str]:
+    """All issue detail URLs, chronological (years ascending)."""
+    soup = fetch_html(session, ARCHIVE_URL, delay)
+    years = sorted({
+        int(m.group(1))
+        for a in soup.select('a[href*="/Archiv/category/"]')
+        if (m := re.search(r"/Archiv/category/(\d{4})", a["href"]))
+    })
+    click.echo(f"found {len(years)} year categories ({years[0]}–{years[-1]})")
+
+    urls: list[str] = []
+    for year in years:
+        soup = fetch_html(session, f"{ARCHIVE_URL}/category/{year}", delay)
+        seen: list[str] = []
+        for a in soup.select('a[href*="/Archiv/waz-"]'):
+            href = urljoin(ARCHIVE_URL, a["href"])
+            if href not in seen:
+                seen.append(href)
+        # category pages list newest first -> reverse for chronological order
+        urls.extend(reversed(seen))
+        click.echo(f"  {year}: {len(seen)} issues")
+    return urls
+
+
+# ---------------------------------------------------------------------------
+# JSON helpers
+# ---------------------------------------------------------------------------
+
+def write_json(path: Path, data) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+@click.group()
+def cli() -> None:
+    """WAZ archive scraping and page extraction."""
+
+
+@cli.command()
+@click.option("--issues", type=click.Path(dir_okay=False, path_type=Path),
+              default="issues.json", show_default=True, help="Metadata file to write.")
+@click.option("--limit", type=int, default=None, help="Only the first N issues (testing).")
+@click.option("--delay", type=float, default=0.3, show_default=True,
+              help="Seconds between HTTP requests.")
+def scrape(issues: Path, limit: int | None, delay: float) -> None:
+    """Scrape issue metadata (number, date, TOC, PDF link) from waz-zh.ch."""
+    session = make_session()
+    urls = collect_issue_urls(session, delay)
+    if limit:
+        urls = urls[:limit]
 
     records = []
-    for pdf_path in pdf_paths:
-        issue_date = parse_issue_date(pdf_path.name)
-        skipped = []
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text() or ""
-                if is_ad_page(text):
-                    skipped.append(page.page_number)
-                    continue
-                records.append({
-                    "issue_date": issue_date,
-                    "page": page.page_number,
-                    "title": extract_title(page),
-                    "text": text,
-                })
-            n_pages = len(pdf.pages)
+    for url in urls:
+        record = None
+        for attempt in (1, 2, 3):  # occasional truncated responses — retry
+            try:
+                record = parse_issue_page(fetch_html(session, url, delay), url)
+                break
+            except (ValueError, KeyError, requests.RequestException) as err:
+                click.echo(f"WARN {url} (attempt {attempt}): {err}", err=True)
+                time.sleep(2 * attempt)
+        if record is None:
+            continue
+        records.append(record)
+        click.echo(f"WAZ {record['number']}  {record['date']}  toc={len(record['toc'])}  {record['pdf']}")
+
+    write_json(issues, records)
+    click.echo(f"wrote {len(records)} issues to {issues}")
+
+
+@cli.command()
+@click.option("--issues", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              default="issues.json", show_default=True, help="Metadata file from `scrape`.")
+@click.option("--output", type=click.Path(dir_okay=False, path_type=Path),
+              default="pages.json", show_default=True, help="JSON file to write.")
+@click.option("--pdf-dir", type=click.Path(file_okay=False, path_type=Path),
+              default="pdfs", show_default=True,
+              help="Optional local PDF cache; missing PDFs are downloaded transiently.")
+@click.option("--limit", type=int, default=None, help="Only the first N issues (testing).")
+@click.option("--delay", type=float, default=0.3, show_default=True,
+              help="Seconds between PDF downloads.")
+@click.option("--force", is_flag=True, help="Re-extract issues already in the output.")
+def extract(issues: Path, output: Path, pdf_dir: Path, limit: int | None,
+            delay: float, force: bool) -> None:
+    """Extract page texts for every issue; PDFs are downloaded to a temp file
+    and deleted after extraction unless already present in --pdf-dir."""
+    issue_meta = json.loads(issues.read_text(encoding="utf-8"))
+    if limit:
+        issue_meta = issue_meta[:limit]
+
+    done: dict[str, dict] = {}
+    if output.exists() and not force:
+        # tolerate an old-format or foreign file: only records with url+pages count
+        done = {
+            rec["url"]: rec
+            for rec in json.loads(output.read_text(encoding="utf-8"))
+            if isinstance(rec, dict) and "url" in rec and "pages" in rec
+        }
+
+    session = make_session()
+    results: list[dict] = []
+    n_extracted = 0
+    for meta in issue_meta:
+        if meta["url"] in done:
+            results.append(done[meta["url"]])
+            continue
+
+        local = pdf_dir / meta["pdf"]
+        tmp_path: Path | None = None
+        try:
+            if local.is_file():
+                pdf_path = local
+            else:
+                time.sleep(delay)
+                res = session.get(meta["pdf_url"], timeout=120, stream=True)
+                res.raise_for_status()
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                    for chunk in res.iter_content(chunk_size=1 << 16):
+                        tmp.write(chunk)
+                    tmp_path = pdf_path = Path(tmp.name)
+
+            page_records, skipped = extract_issue_pages(pdf_path)
+        except Exception as err:  # noqa: BLE001 — keep going, issue is retried next run
+            click.echo(f"WARN {meta['title']}: {err}", err=True)
+            continue
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+
+        results.append({**meta, "pages": page_records})
+        n_extracted += 1
         click.echo(
-            f"{pdf_path.name}: {n_pages - len(skipped)}/{n_pages} pages extracted"
+            f"{meta['title']}: {len(page_records)} pages"
             + (f", ads skipped: {skipped}" if skipped else "")
         )
+        write_json(output, results)
 
-    output.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-    click.echo(f"wrote {len(records)} pages to {output}")
+    write_json(output, results)
+    click.echo(
+        f"wrote {len(results)} issues to {output} "
+        f"({n_extracted} extracted, {len(results) - n_extracted} reused)"
+    )
 
 
 if __name__ == "__main__":
-    extract()
+    cli()
