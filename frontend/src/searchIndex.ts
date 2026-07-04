@@ -27,6 +27,7 @@ export interface Issue {
   issue_date: string
   issue_year: number
   issue_number: string | null
+  toc: string[]
 }
 
 export interface SearchHit {
@@ -35,6 +36,7 @@ export interface SearchHit {
   pdf_path: string
   issue_title: string
   issue_date: string
+  issue_number: string | null
   page: number
   displayTitle: string
   titleHtml: string
@@ -61,6 +63,10 @@ export function pdfPath(issue: IssueRecord): string {
   return new URL(issue.pdf_url).pathname
 }
 
+export function findIssueByPdfPath(issues: IssueRecord[], path: string): IssueRecord | undefined {
+  return issues.find((issue) => pdfPath(issue) === path)
+}
+
 export function listIssues(issues: IssueRecord[]): Issue[] {
   return issues
     .map((issue) => ({
@@ -70,6 +76,7 @@ export function listIssues(issues: IssueRecord[]): Issue[] {
       issue_date: issue.date,
       issue_year: parseInt(issue.date, 10),
       issue_number: issue.number,
+      toc: issue.toc,
     }))
     .sort((a, b) => b.issue_date.localeCompare(a.issue_date))
 }
@@ -177,6 +184,7 @@ export function searchPages(
         pdf_path: path,
         issue_title: issue.title,
         issue_date: issue.date,
+        issue_number: issue.number,
         page: p.page,
         displayTitle,
         titleHtml: p.title ? highlight(p.title, terms) : escapeHtml(displayTitle),

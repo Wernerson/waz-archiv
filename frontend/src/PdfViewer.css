@@ -94,6 +94,7 @@
   text-align: center;
 }
 
+.viewer-download,
 .viewer-close {
   background: none;
   border: none;
@@ -103,6 +104,9 @@
   padding: 4px 8px;
   border-radius: 4px;
   line-height: 1;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
 
   &:hover {
     color: #fff;

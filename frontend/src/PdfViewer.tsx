@@ -11,20 +11,28 @@ function toSpreadLeft(page: number): number {
   return page % 2 === 0 ? page : page - 1
 }
 
+function downloadFileName(title: string): string {
+  const slug = title.trim().replace(/\s+/g, '_').replace(/[^\w.-]/g, '')
+  return `${slug || 'waz'}.pdf`
+}
+
 interface Props {
   file: string
   startPage: number
   title: string
   onClose: () => void
+  onPageChange?: (page: number) => void
 }
 
-export default function PdfViewer({ file, startPage, title, onClose }: Props) {
+export default function PdfViewer({ file, startPage, title, onClose, onPageChange }: Props) {
   const [numPages, setNumPages]   = useState(0)
   const [left, setLeft]           = useState(() => toSpreadLeft(startPage))
   const [pageHeight, setPageHeight] = useState(0)
   const [zoom, setZoom]           = useState(1.0)
   const bodyRef   = useRef<HTMLDivElement>(null)
   const docWrapRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { onPageChange?.(left) }, [left, onPageChange])
 
   const isCover = left === 1
   const right   = isCover ? null : left + 1
@@ -116,6 +124,13 @@ export default function PdfViewer({ file, startPage, title, onClose }: Props) {
               aria-label="Vergrößern"
             >+</button>
           </div>
+          <a
+            className="viewer-download"
+            href={file}
+            download={downloadFileName(title)}
+            aria-label="PDF herunterladen"
+            title="PDF herunterladen"
+          >⬇</a>
           <button className="viewer-close" onClick={onClose} aria-label="Schließen">✕</button>
         </header>
 

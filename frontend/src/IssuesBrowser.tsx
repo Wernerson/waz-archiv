@@ -6,6 +6,16 @@ import { listIssues, loadIssues, type Issue } from './searchIndex'
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
+const FULL_MONTHS = [
+  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+]
+
+function formatReleaseDate(iso: string): string {
+  const [year, month, day] = iso.split('-').map((n) => parseInt(n, 10))
+  return `${day}. ${FULL_MONTHS[month - 1] ?? ''} ${year}`
+}
+
 async function fetchIssues(startYear: number, endYear: number): Promise<Issue[]> {
   const issues = await loadIssues()
   return listIssues(issues).filter(
@@ -58,6 +68,40 @@ function Thumbnail({ file, onClick }: { file: string; onClick: () => void }) {
   )
 }
 
+function IssuePreview({ issue, onClose, onRead }: {
+  issue: Issue
+  onClose: () => void
+  onRead: (title: string) => void
+}) {
+  const month = parseInt(issue.issue_date.split('-')[1], 10)
+  const heading = `WAZ ${issue.issue_number ?? ''} ${FULL_MONTHS[month - 1] ?? ''} ${issue.issue_year}`
+    .replace(/\s+/g, ' ').trim()
+
+  return (
+    <div className="preview-overlay" onClick={onClose}>
+      <div className="preview-modal" onClick={(e) => e.stopPropagation()}>
+        <button className="preview-close" onClick={onClose} aria-label="Schließen">✕</button>
+        <div className="preview-thumb">
+          <Thumbnail file={issue.pdf_path} onClick={() => onRead(heading)} />
+        </div>
+        <div className="preview-info">
+          <h2 className="preview-heading">{heading}</h2>
+          <p className="preview-date">Erscheinungsdatum: {formatReleaseDate(issue.issue_date)}</p>
+          {issue.toc.length > 0 && (
+            <>
+              <h3 className="preview-toc-heading">Inhalt</h3>
+              <ul className="preview-toc">
+                {issue.toc.map((entry, i) => <li key={i}>{entry}</li>)}
+              </ul>
+            </>
+          )}
+          <button className="preview-read-btn" onClick={() => onRead(heading)}>Jetzt lesen</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 interface Props {
   startYear: number
   endYear: number
@@ -68,6 +112,7 @@ export default function IssuesBrowser({ startYear, endYear, onOpen }: Props) {
   const [issues, setIssues] = useState<Issue[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [preview, setPreview] = useState<Issue | null>(null)
   const sectionRefs = useRef(new Map<number, HTMLElement>())
 
   useEffect(() => {
@@ -120,7 +165,7 @@ export default function IssuesBrowser({ startYear, endYear, onOpen }: Props) {
                   <div key={issue.issue_id} className="issue-card">
                     <Thumbnail
                       file={issue.pdf_path}
-                      onClick={() => onOpen(issue.pdf_path, label)}
+                      onClick={() => setPreview(issue)}
                     />
                     <div className="issue-label">{label}</div>
                   </div>
@@ -138,6 +183,14 @@ export default function IssuesBrowser({ startYear, endYear, onOpen }: Props) {
           </button>
         ))}
       </aside>
+
+      {preview && (
+        <IssuePreview
+          issue={preview}
+          onClose={() => setPreview(null)}
+          onRead={(title) => onOpen(preview.pdf_path, title)}
+        />
+      )}
     </div>
   )
 }
