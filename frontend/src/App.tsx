@@ -261,8 +261,8 @@ export default function App() {
 
       {showBrowser ? (
         <IssuesBrowser
-          startYear={startYear}
-          endYear={endYear}
+          startYear={yearBounds.min}
+          endYear={yearBounds.max}
           onOpen={(pdfPath, title) => openViewer(pdfPath, title)}
         />
       ) : (
