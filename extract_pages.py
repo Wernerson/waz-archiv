@@ -4,7 +4,7 @@ texts from the issue PDFs, skipping advertising pages.
 
 Usage:
     uv run extract_pages.py scrape             # metadata -> issues.json
-    uv run extract_pages.py extract            # PDFs (transient) -> pages.json
+    uv run extract_pages.py extract            # PDFs + covers -> pdfs/, covers/, pages.json
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ import os
 import re
 import statistics
 import sys
-import tempfile
 import time
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlsplit
@@ -242,6 +241,27 @@ def local_pdf_name(pdf_url: str) -> str:
     return unquote(path.rsplit("/", 1)[-1]).replace(" ", "_")
 
 
+def local_cover_name(cover_url: str) -> str:
+    """URL -> filesystem-friendly basename, prefixed with its parent directory
+    id (e.g. ".../EasyDNNnews/403/Startseite1.jpg" -> "403_Startseite1.jpg")
+    since the site reuses generic image names across issues."""
+    parts = [p for p in urlsplit(cover_url).path.split("/") if p]
+    name = unquote(parts[-1]).replace(" ", "_")
+    return f"{parts[-2]}_{name}" if len(parts) > 1 else name
+
+
+def download_file(session: requests.Session, url: str, dest: Path) -> None:
+    """Stream a URL to disk atomically (temp file + rename)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    res = session.get(url, timeout=120, stream=True)
+    res.raise_for_status()
+    with open(tmp, "wb") as f:
+        for chunk in res.iter_content(chunk_size=1 << 16):
+            f.write(chunk)
+    os.replace(tmp, dest)
+
+
 def parse_issue_page(soup: BeautifulSoup, url: str) -> dict:
     title_el = soup.select_one("h3.edn_articleTitle")
     if not title_el:
@@ -270,6 +290,13 @@ def parse_issue_page(soup: BeautifulSoup, url: str) -> dict:
         raise ValueError("no PDF link")
     pdf_url = requests.utils.requote_uri(urljoin(url, pdf_link["href"].strip()))
 
+    # Front-page cover image the site already renders for the article teaser —
+    # reuse it as the issue thumbnail so the frontend never has to open the PDF.
+    cover_el = soup.select_one('meta[property="og:image"]')
+    if cover_el is None:
+        raise ValueError("no og:image meta tag")
+    cover_url = requests.utils.requote_uri(urljoin(url, cover_el["content"].strip()))
+
     return {
         "title": title,
         "number": number_m.group(1) if number_m else None,
@@ -277,6 +304,7 @@ def parse_issue_page(soup: BeautifulSoup, url: str) -> dict:
         "url": url,
         "pdf": local_pdf_name(pdf_url),
         "pdf_url": pdf_url,
+        "cover_url": cover_url,
         "toc": toc,
     }
 
@@ -363,15 +391,19 @@ def scrape(issues: Path, limit: int | None, delay: float) -> None:
               default="pages.json", show_default=True, help="JSON file to write.")
 @click.option("--pdf-dir", type=click.Path(file_okay=False, path_type=Path),
               default="pdfs", show_default=True,
-              help="Optional local PDF cache; missing PDFs are downloaded transiently.")
+              help="PDFs are downloaded here permanently and served from this server.")
+@click.option("--cover-dir", type=click.Path(file_okay=False, path_type=Path),
+              default="covers", show_default=True,
+              help="Cover images are downloaded here permanently and served from this server.")
 @click.option("--limit", type=int, default=None, help="Only the first N issues (testing).")
 @click.option("--delay", type=float, default=0.3, show_default=True,
-              help="Seconds between PDF downloads.")
+              help="Seconds between downloads.")
 @click.option("--force", is_flag=True, help="Re-extract issues already in the output.")
-def extract(issues: Path, output: Path, pdf_dir: Path, limit: int | None,
+def extract(issues: Path, output: Path, pdf_dir: Path, cover_dir: Path, limit: int | None,
             delay: float, force: bool) -> None:
-    """Extract page texts for every issue; PDFs are downloaded to a temp file
-    and deleted after extraction unless already present in --pdf-dir."""
+    """Extract page texts for every issue. The PDF and cover image are
+    downloaded once into --pdf-dir / --cover-dir and kept there so the
+    webapp can serve them directly instead of proxying waz-zh.ch."""
     issue_meta = json.loads(issues.read_text(encoding="utf-8"))
     if limit:
         issue_meta = issue_meta[:limit]
@@ -389,33 +421,34 @@ def extract(issues: Path, output: Path, pdf_dir: Path, limit: int | None,
     results: list[dict] = []
     n_extracted = 0
     for meta in issue_meta:
-        if meta["url"] in done:
-            results.append(done[meta["url"]])
+        pdf_local = pdf_dir / meta["pdf"]
+        cover_name = local_cover_name(meta["cover_url"])
+        cover_local = cover_dir / cover_name
+
+        try:
+            if not pdf_local.is_file():
+                time.sleep(delay)
+                download_file(session, meta["pdf_url"], pdf_local)
+            if not cover_local.is_file():
+                time.sleep(delay)
+                download_file(session, meta["cover_url"], cover_local)
+        except Exception as err:  # noqa: BLE001 — keep going, issue is retried next run
+            click.echo(f"WARN downloading assets for {meta['title']}: {err}", err=True)
             continue
 
-        local = pdf_dir / meta["pdf"]
-        tmp_path: Path | None = None
-        try:
-            if local.is_file():
-                pdf_path = local
-            else:
-                time.sleep(delay)
-                res = session.get(meta["pdf_url"], timeout=120, stream=True)
-                res.raise_for_status()
-                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                    for chunk in res.iter_content(chunk_size=1 << 16):
-                        tmp.write(chunk)
-                    tmp_path = pdf_path = Path(tmp.name)
+        if meta["url"] in done:
+            # Assets are freshly (re-)downloaded above, but the extracted page
+            # text is expensive to redo — reuse it for issues already done.
+            results.append({**meta, "cover": cover_name, "pages": done[meta["url"]]["pages"]})
+            continue
 
-            page_records, skipped = extract_issue_pages(pdf_path)
+        try:
+            page_records, skipped = extract_issue_pages(pdf_local)
         except Exception as err:  # noqa: BLE001 — keep going, issue is retried next run
             click.echo(f"WARN {meta['title']}: {err}", err=True)
             continue
-        finally:
-            if tmp_path is not None:
-                tmp_path.unlink(missing_ok=True)
 
-        results.append({**meta, "pages": page_records})
+        results.append({**meta, "cover": cover_name, "pages": page_records})
         n_extracted += 1
         click.echo(
             f"{meta['title']}: {len(page_records)} pages"

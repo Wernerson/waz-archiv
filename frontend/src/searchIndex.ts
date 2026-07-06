@@ -1,7 +1,7 @@
 // Client-side search over the extracted magazine pages: downloads pages.json
 // once and answers all queries in memory — no search backend required.
-// PDFs are not hosted with the app; they load from waz-zh.ch via the
-// same-origin /Portals path (proxied in dev by vite, in prod by Nginx).
+// PDFs and cover images are downloaded once by extract_pages.py and served
+// directly from this server (dev: vite, prod: Nginx) under /pdfs and /covers.
 
 export interface PageRecord {
   page: number
@@ -16,6 +16,8 @@ export interface IssueRecord {
   url: string
   pdf: string
   pdf_url: string
+  cover: string
+  cover_url: string
   toc: string[]
   pages: PageRecord[]
 }
@@ -23,6 +25,7 @@ export interface IssueRecord {
 export interface Issue {
   issue_id: string
   pdf_path: string
+  cover_path: string | undefined
   issue_title: string
   issue_date: string
   issue_year: number
@@ -57,10 +60,15 @@ export function loadIssues(): Promise<IssueRecord[]> {
   return cached
 }
 
-// Same-origin path of the PDF on waz-zh.ch (e.g. /Portals/0/Archiv/1992/….pdf);
-// the server proxies this prefix because waz-zh.ch sends no CORS headers.
+// Same-origin path of the locally stored PDF (downloaded once by extract_pages.py).
 export function pdfPath(issue: IssueRecord): string {
-  return new URL(issue.pdf_url).pathname
+  return `/pdfs/${issue.pdf}`
+}
+
+// Same-origin path of the locally stored cover image — lets thumbnails
+// render without opening the PDF.
+export function coverPath(issue: IssueRecord): string | undefined {
+  return issue.cover ? `/covers/${issue.cover}` : undefined
 }
 
 export function findIssueByPdfPath(issues: IssueRecord[], path: string): IssueRecord | undefined {
@@ -72,6 +80,7 @@ export function listIssues(issues: IssueRecord[]): Issue[] {
     .map((issue) => ({
       issue_id: issue.url,
       pdf_path: pdfPath(issue),
+      cover_path: coverPath(issue),
       issue_title: issue.title,
       issue_date: issue.date,
       issue_year: parseInt(issue.date, 10),

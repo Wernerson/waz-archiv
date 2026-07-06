@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { Document, Page } from 'react-pdf'
 import './IssuesBrowser.css'
 import { listIssues, loadIssues, type Issue } from './searchIndex'
 
@@ -23,47 +22,20 @@ async function fetchIssues(startYear: number, endYear: number): Promise<Issue[]>
   )
 }
 
-function Thumbnail({ file, onClick }: { file: string; onClick: () => void }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [visible, setVisible] = useState(false)
-  const [width, setWidth] = useState(0)
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const io = new IntersectionObserver(
-      ([e]) => { if (e.isIntersecting) setVisible(true) },
-      { rootMargin: '400px' },
-    )
-    const ro = new ResizeObserver(([e]) => setWidth(Math.round(e.contentRect.width)))
-    io.observe(el)
-    ro.observe(el)
-    return () => { io.disconnect(); ro.disconnect() }
-  }, [])
+function Thumbnail({ src, alt, onClick }: { src: string | undefined; alt: string; onClick: () => void }) {
+  const [failed, setFailed] = useState(false)
 
   return (
     <div
-      ref={ref}
       className="issue-thumb"
       role="button"
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => e.key === 'Enter' && onClick()}
     >
-      {visible && width > 0 && (
-        <Document
-          file={file}
-          loading={null}
-          error={<span className="thumb-error">–</span>}
-        >
-          <Page
-            pageNumber={1}
-            width={width}
-            renderTextLayer={false}
-            renderAnnotationLayer={false}
-          />
-        </Document>
-      )}
+      {!failed && src
+        ? <img src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} />
+        : <span className="thumb-error">–</span>}
     </div>
   )
 }
@@ -82,7 +54,7 @@ function IssuePreview({ issue, onClose, onRead }: {
       <div className="preview-modal" onClick={(e) => e.stopPropagation()}>
         <button className="preview-close" onClick={onClose} aria-label="Schließen">✕</button>
         <div className="preview-thumb">
-          <Thumbnail file={issue.pdf_path} onClick={() => onRead(heading)} />
+          <Thumbnail src={issue.cover_path} alt={heading} onClick={() => onRead(heading)} />
         </div>
         <div className="preview-info">
           <h2 className="preview-heading">{heading}</h2>
@@ -164,7 +136,8 @@ export default function IssuesBrowser({ startYear, endYear, onOpen }: Props) {
                 return (
                   <div key={issue.issue_id} className="issue-card">
                     <Thumbnail
-                      file={issue.pdf_path}
+                      src={issue.cover_path}
+                      alt={label}
                       onClick={() => setPreview(issue)}
                     />
                     <div className="issue-label">{label}</div>
