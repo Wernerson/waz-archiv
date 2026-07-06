@@ -2,6 +2,10 @@
 // once and answers all queries in memory — no search backend required.
 // PDFs and cover images are downloaded once by extract_pages.py and served
 // directly from this server (dev: vite, prod: Nginx) under /pdfs and /covers.
+// Ranking is BM25F (see ./bm25Index.ts) built once per pages.json payload.
+import { buildIndex, queryIndex, type SearchIndex } from './bm25Index'
+import { tokenizeWithOffsets } from './textTokenize'
+import { stem } from './germanStemmer'
 
 export interface PageRecord {
   page: number
@@ -35,7 +39,6 @@ export interface Issue {
 
 export interface SearchHit {
   id: string
-  score: number
   pdf_path: string
   issue_title: string
   issue_date: string
@@ -48,9 +51,18 @@ export interface SearchHit {
 
 export const RESULT_LIMIT = 20
 const SNIPPET_LENGTH = 260
-const TITLE_BOOST = 3
 
 let cached: Promise<IssueRecord[]> | null = null
+const indexCache = new WeakMap<IssueRecord[], SearchIndex>()
+
+function getIndex(issues: IssueRecord[]): SearchIndex {
+  let index = indexCache.get(issues)
+  if (!index) {
+    index = buildIndex(issues)
+    indexCache.set(issues, index)
+  }
+  return index
+}
 
 export function loadIssues(): Promise<IssueRecord[]> {
   cached ??= fetch('/pages.json').then((res) => {
@@ -114,33 +126,30 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c])
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function highlight(text: string, terms: string[]): string {
-  const re = new RegExp(`(${terms.map(escapeRegex).join('|')})`, 'gi')
-  return text
-    .split(re)
-    .map((part, i) => (i % 2 === 1 ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part)))
-    .join('')
-}
-
-function countOccurrences(haystack: string, needle: string): number {
-  let count = 0
-  let idx = haystack.indexOf(needle)
-  while (idx !== -1) {
-    count++
-    idx = haystack.indexOf(needle, idx + needle.length)
+// Wraps every token whose stem is in `acceptedStems` in <mark>, using the
+// original surface substring (never the stem) so display text is untouched.
+function highlight(text: string, acceptedStems: Set<string>): string {
+  const tokens = tokenizeWithOffsets(text)
+  let result = ''
+  let last = 0
+  for (const t of tokens) {
+    if (!acceptedStems.has(stem(t.token))) continue
+    result += escapeHtml(text.slice(last, t.start))
+    result += `<mark>${escapeHtml(text.slice(t.start, t.end))}</mark>`
+    last = t.end
   }
-  return count
+  result += escapeHtml(text.slice(last))
+  return result
 }
 
-function makeSnippet(text: string, textLower: string, terms: string[]): string {
+function makeSnippet(text: string, acceptedStems: Set<string>): string {
+  const tokens = tokenizeWithOffsets(text)
   let pos = -1
-  for (const term of terms) {
-    const i = textLower.indexOf(term)
-    if (i !== -1 && (pos === -1 || i < pos)) pos = i
+  for (const t of tokens) {
+    if (acceptedStems.has(stem(t.token))) {
+      pos = t.start
+      break
+    }
   }
   let start = pos === -1 ? 0 : Math.max(0, pos - Math.floor(SNIPPET_LENGTH / 3))
   if (start > 0) {
@@ -153,7 +162,7 @@ function makeSnippet(text: string, textLower: string, terms: string[]): string {
     if (wordBreak > start) end = wordBreak
   }
   const fragment = text.slice(start, end).replace(/\s+/g, ' ')
-  return highlight(fragment, terms)
+  return highlight(fragment, acceptedStems)
 }
 
 export function searchPages(
@@ -162,45 +171,24 @@ export function searchPages(
   startYear: number,
   endYear: number,
 ): { hits: SearchHit[]; total: number } {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
-  if (!terms.length) return { hits: [], total: 0 }
+  const index = getIndex(issues)
+  const { rankedDocIds, total, acceptedStems } = queryIndex(index, query, startYear, endYear)
 
-  const scored: SearchHit[] = []
-  for (const issue of issues) {
-    const year = parseInt(issue.date, 10)
-    if (year < startYear || year > endYear) continue
-    const path = pdfPath(issue)
-    for (const p of issue.pages) {
-      const textLower = p.text.toLowerCase()
-      const titleLower = (p.title ?? '').toLowerCase()
-      let score = 0
-      let matchesAll = true
-      for (const term of terms) {
-        const inTitle = countOccurrences(titleLower, term)
-        const inText = countOccurrences(textLower, term)
-        if (inTitle + inText === 0) {
-          matchesAll = false
-          break
-        }
-        score += TITLE_BOOST * inTitle + inText
-      }
-      if (!matchesAll) continue
-
-      const displayTitle = p.title ?? `Seite ${p.page}`
-      scored.push({
-        id: `${issue.url}#${p.page}`,
-        score,
-        pdf_path: path,
-        issue_title: issue.title,
-        issue_date: issue.date,
-        issue_number: issue.number,
-        page: p.page,
-        displayTitle,
-        titleHtml: p.title ? highlight(p.title, terms) : escapeHtml(displayTitle),
-        snippetHtml: makeSnippet(p.text, textLower, terms),
-      })
+  const hits: SearchHit[] = rankedDocIds.slice(0, RESULT_LIMIT).map((docId) => {
+    const { issue, page } = index.docMeta[docId]
+    const displayTitle = page.title ?? `Seite ${page.page}`
+    return {
+      id: `${issue.url}#${page.page}`,
+      pdf_path: pdfPath(issue),
+      issue_title: issue.title,
+      issue_date: issue.date,
+      issue_number: issue.number,
+      page: page.page,
+      displayTitle,
+      titleHtml: page.title ? highlight(page.title, acceptedStems) : escapeHtml(displayTitle),
+      snippetHtml: makeSnippet(page.text, acceptedStems),
     }
-  }
-  scored.sort((a, b) => b.score - a.score)
-  return { hits: scored.slice(0, RESULT_LIMIT), total: scored.length }
+  })
+
+  return { hits, total }
 }
