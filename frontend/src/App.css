@@ -302,6 +302,11 @@
   margin-bottom: 6px;
 }
 
+.badge,
+.open-hint {
+  flex-shrink: 0;
+}
+
 .badge {
   font-size: 0.72rem;
   font-weight: 600;
@@ -322,6 +327,11 @@
 }
 
 .issue-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 0.85rem;
   color: var(--text);
 }
