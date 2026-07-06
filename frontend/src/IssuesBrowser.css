@@ -96,10 +96,26 @@
 .year-nav {
   position: sticky;
   top: 24px;
-  align-self: start;
+  height: calc(100vh - 48px);
+  overflow-y: auto;
+
+  /* 1. Hide scrollbar for Chrome, Safari and Opera */
+  &::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 2. Hide scrollbar for Firefox */
+  scrollbar-width: none;
+
+  /* 3. Hide scrollbar for IE and Edge (legacy) */
+  -ms-overflow-style: none;
+}
+
+.year-nav-content {
   display: flex;
-  flex-direction: column;
   gap: 2px;
+  align-self: start;
+  flex-direction: column;
 }
 
 .year-nav-btn {

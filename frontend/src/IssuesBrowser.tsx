@@ -150,11 +150,13 @@ export default function IssuesBrowser({ startYear, endYear, onOpen }: Props) {
       </div>
 
       <aside className="year-nav">
-        {years.map((year) => (
-          <button key={year} className="year-nav-btn" onClick={() => scrollToYear(year)}>
-            {year}
-          </button>
-        ))}
+        <div className="year-nav-content">
+            {years.map((year) => (
+              <button key={year} className="year-nav-btn" onClick={() => scrollToYear(year)}>
+                {year}
+              </button>
+            ))}
+        </div>
       </aside>
 
       {preview && (
