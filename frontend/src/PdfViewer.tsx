@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Document, Page } from 'react-pdf'
+import 'react-pdf/dist/Page/TextLayer.css'
 import './PdfViewer.css'
 
 const ZOOM_STEP = 0.25
@@ -29,6 +30,7 @@ export default function PdfViewer({ file, startPage, title, onClose, onPageChang
   const [left, setLeft]           = useState(() => toSpreadLeft(startPage))
   const [pageHeight, setPageHeight] = useState(0)
   const [zoom, setZoom]           = useState(1.0)
+  const [mode, setMode]           = useState<'pan' | 'select'>('pan')
   const bodyRef   = useRef<HTMLDivElement>(null)
   const docWrapRef = useRef<HTMLDivElement>(null)
 
@@ -73,6 +75,49 @@ export default function PdfViewer({ file, startPage, title, onClose, onPageChang
     return () => el.removeEventListener('wheel', handler)
   }, [zoomIn, zoomOut])
 
+  // Click-drag to pan with the mouse, only in "pan" mode; in "select" mode
+  // pointerdown is left alone so native text selection works as usual
+  // (touch already scrolls natively via overflow, so panning is mouse-only)
+  useEffect(() => {
+    const el = docWrapRef.current
+    if (!el || mode !== 'pan') return
+
+    let dragging = false
+    let startX = 0, startY = 0, startScrollLeft = 0, startScrollTop = 0
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0 || e.pointerType !== 'mouse') return
+      e.preventDefault()
+      dragging = true
+      startX = e.clientX
+      startY = e.clientY
+      startScrollLeft = el.scrollLeft
+      startScrollTop = el.scrollTop
+      el.setPointerCapture(e.pointerId)
+      el.classList.add('dragging')
+    }
+    const onPointerMove = (e: PointerEvent) => {
+      if (!dragging) return
+      el.scrollLeft = startScrollLeft - (e.clientX - startX)
+      el.scrollTop = startScrollTop - (e.clientY - startY)
+    }
+    const stopDragging = () => {
+      dragging = false
+      el.classList.remove('dragging')
+    }
+
+    el.addEventListener('pointerdown', onPointerDown)
+    el.addEventListener('pointermove', onPointerMove)
+    el.addEventListener('pointerup', stopDragging)
+    el.addEventListener('pointercancel', stopDragging)
+    return () => {
+      el.removeEventListener('pointerdown', onPointerDown)
+      el.removeEventListener('pointermove', onPointerMove)
+      el.removeEventListener('pointerup', stopDragging)
+      el.removeEventListener('pointercancel', stopDragging)
+    }
+  }, [mode])
+
   // Lock body scroll while viewer is open
   useEffect(() => {
     document.body.style.overflow = 'hidden'
@@ -105,6 +150,30 @@ export default function PdfViewer({ file, startPage, title, onClose, onPageChang
         <header className="viewer-header">
           <span className="viewer-title">{title}</span>
           <span className="viewer-page-label">{pageLabel}</span>
+          <div className="mode-controls">
+            <button
+              className={`mode-btn${mode === 'pan' ? ' mode-btn--active' : ''}`}
+              onClick={() => setMode('pan')}
+              aria-label="Verschieben"
+              aria-pressed={mode === 'pan'}
+              title="Verschieben (Ziehen zum Scrollen)"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2 L12 22 M2 12 L22 12 M5 9 L2 12 L5 15 M19 9 L22 12 L19 15 M9 5 L12 2 L15 5 M9 19 L12 22 L15 19" />
+              </svg>
+            </button>
+            <button
+              className={`mode-btn${mode === 'select' ? ' mode-btn--active' : ''}`}
+              onClick={() => setMode('select')}
+              aria-label="Text auswählen"
+              aria-pressed={mode === 'select'}
+              title="Text auswählen"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 4h6 M12 4v16 M9 20h6" />
+              </svg>
+            </button>
+          </div>
           <div className="zoom-controls">
             <button
               className="zoom-btn"
@@ -137,7 +206,7 @@ export default function PdfViewer({ file, startPage, title, onClose, onPageChang
         <div className="viewer-body" ref={bodyRef}>
           <button className="nav-btn" onClick={goPrev} disabled={!canPrev} aria-label="Vorherige Seite">‹</button>
 
-          <div className="document-wrap" ref={docWrapRef}>
+          <div className="document-wrap" ref={docWrapRef} data-mode={mode}>
             <Document
               file={file}
               onLoadSuccess={({ numPages }) => setNumPages(numPages)}
@@ -150,7 +219,7 @@ export default function PdfViewer({ file, startPage, title, onClose, onPageChang
                     <Page
                       pageNumber={left}
                       height={effectiveHeight}
-                      renderTextLayer={false}
+                      renderTextLayer
                       renderAnnotationLayer={false}
                     />
                   </div>
@@ -159,7 +228,7 @@ export default function PdfViewer({ file, startPage, title, onClose, onPageChang
                       <Page
                         pageNumber={right}
                         height={effectiveHeight}
-                        renderTextLayer={false}
+                        renderTextLayer
                         renderAnnotationLayer={false}
                       />
                     </div>

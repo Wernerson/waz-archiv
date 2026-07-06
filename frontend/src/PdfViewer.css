@@ -43,6 +43,45 @@
   white-space: nowrap;
 }
 
+/* ── Mode controls (pan / select text) ── */
+.mode-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.mode-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #bbb;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+
+  &:hover {
+    color: #fff;
+    background: #2e2e2e;
+  }
+}
+
+.mode-btn--active {
+  color: #fff;
+  background: #3a5a8c;
+
+  &:hover {
+    background: #3a5a8c;
+  }
+}
+
 /* ── Zoom controls ── */
 .zoom-controls {
   display: flex;
@@ -151,17 +190,30 @@
   min-width: 0;
   height: 100%;
   overflow: auto;
-  /* Center pages via flex when they fit; when they overflow the browser scrolls from top-left */
+  /* "safe" centering: fall back to start-alignment once content overflows,
+     otherwise plain `center` clips one edge from the scrollable area
+     (browsers don't extend scrollWidth/scrollHeight symmetrically for
+     unsafe-centered flex content) — without it, zooming in makes the
+     right/bottom edge of the page unreachable while scrolling. */
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: safe center;
+  justify-content: safe center;
+}
+
+.document-wrap[data-mode='pan'] {
+  cursor: grab;
+}
+
+.document-wrap[data-mode='pan'].dragging {
+  cursor: grabbing;
+  user-select: none;
 }
 
 /* react-pdf renders its own div — pass through flex layout */
 .document-wrap .react-pdf__Document {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: safe center;
+  justify-content: safe center;
 }
 
 /* ── Two-page spread ── */
