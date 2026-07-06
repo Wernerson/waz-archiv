@@ -214,6 +214,9 @@
   border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 
   &:hover:not(:disabled) {
     opacity: 0.88;
@@ -223,6 +226,32 @@
     opacity: 0.5;
     cursor: default;
   }
+}
+
+.spinner {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.search-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.85rem;
 }
 
 .back-btn {

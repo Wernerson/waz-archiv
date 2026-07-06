@@ -6,6 +6,7 @@ import { findIssueByPdfPath, loadIssues, searchPages, yearBounds, type SearchHit
 
 const PDF_PARAM = 'pdf'
 const PAGE_PARAM = 'page'
+const QUERY_PARAM = 'q'
 
 function setViewerUrl(pdfPath: string, page: number) {
   const params = new URLSearchParams(window.location.search)
@@ -21,6 +22,17 @@ function clearViewerUrl() {
   params.delete(PAGE_PARAM)
   const query = params.toString()
   window.history.replaceState(null, '', query ? `?${query}` : window.location.pathname)
+}
+
+function setSearchUrl(query: string) {
+  const params = new URLSearchParams(window.location.search)
+  if (query) {
+    params.set(QUERY_PARAM, query)
+  } else {
+    params.delete(QUERY_PARAM)
+  }
+  const search = params.toString()
+  window.history.replaceState(null, '', search ? `?${search}` : window.location.pathname)
 }
 
 interface ViewerState {
@@ -50,6 +62,15 @@ async function fetchYearBounds(): Promise<YearBounds> {
   return yearBounds(await loadIssues())
 }
 
+// A single requestAnimationFrame fires *before* the browser paints, so it
+// doesn't actually guarantee the loading spinner became visible yet — only
+// waiting for a second one does (the first frame's paint has then happened).
+function waitForPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  })
+}
+
 function formatDate(iso: string): string {
   if (!iso) return ''
   const [year, month] = iso.split('-')
@@ -75,12 +96,20 @@ export default function App() {
   const startPercent = ((startYear - yearBounds.min) / yearSpan) * 100
   const endPercent = ((endYear - yearBounds.min) / yearSpan) * 100
 
+  // Deep link support: restore ?q=… once the real year bounds are known, so
+  // the year-range filter used for the very first search is correct (the
+  // fallback bounds would otherwise wrongly exclude the archive's early years).
   useEffect(() => {
+    const initialQuery = new URLSearchParams(window.location.search).get(QUERY_PARAM)
     fetchYearBounds()
       .then((bounds) => {
         setYearBounds(bounds)
         setStartYear(bounds.min)
         setEndYear(bounds.max)
+        if (initialQuery) {
+          setQuery(initialQuery)
+          void runSearch(initialQuery, bounds.min, bounds.max)
+        }
       })
       .catch((err) => {
         console.error('Failed to load year bounds', err)
@@ -103,17 +132,14 @@ export default function App() {
       })
   }, [])
 
-  async function handleSearch(e: React.FormEvent) {
-    e.preventDefault()
-    const q = query.trim()
-    if (!q) {
-      resetSearch()
-      return
-    }
+  async function runSearch(q: string, searchStartYear: number, searchEndYear: number) {
     setLoading(true)
     setError(null)
     try {
-      const result = await searchArticles(q, startYear, endYear)
+      // Let the loading spinner actually paint before the (possibly slow,
+      // first-time-only) synchronous index build blocks the main thread.
+      await waitForPaint()
+      const result = await searchArticles(q, searchStartYear, searchEndYear)
       setHits(result.hits)
       setTotal(result.total)
     } catch (err) {
@@ -125,11 +151,23 @@ export default function App() {
     }
   }
 
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault()
+    const q = query.trim()
+    if (!q) {
+      resetSearch()
+      return
+    }
+    setSearchUrl(q)
+    await runSearch(q, startYear, endYear)
+  }
+
   function resetSearch() {
     setQuery('')
     setHits([])
     setTotal(null)
     setError(null)
+    setSearchUrl('')
     inputRef.current?.focus()
   }
 
@@ -180,9 +218,15 @@ export default function App() {
               autoFocus
             />
             <button className="search-btn" type="submit" disabled={loading}>
-              {loading ? '…' : 'Suchen'}
+              {loading ? <span className="spinner" aria-hidden="true" /> : 'Suchen'}
             </button>
           </form>
+          {loading && (
+            <p className="search-status">
+              <span className="spinner" aria-hidden="true" />
+              Durchsuche Archiv…
+            </p>
+          )}
           {!showBrowser && (
             <>
               <button
