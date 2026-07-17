@@ -186,6 +186,9 @@
 
 /* ── Scrollable document container ── */
 .document-wrap {
+  /* Overrides pdf.js's default magenta search-highlight color (set via
+     TextLayer.css, imported in PdfViewer.tsx) to match the app's accent. */
+  --highlight-bg-color: rgba(196, 18, 26, 0.55);
   flex: 1;
   min-width: 0;
   height: 100%;

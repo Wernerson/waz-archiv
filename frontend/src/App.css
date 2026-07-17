@@ -324,6 +324,25 @@
   opacity: 1;
 }
 
+.load-more-btn {
+  display: block;
+  margin: 24px auto 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 20px;
+  font-size: 0.85rem;
+  font-family: var(--sans);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
 .result-meta {
   display: flex;
   align-items: center;

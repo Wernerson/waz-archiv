@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Document, Page } from 'react-pdf'
 import 'react-pdf/dist/Page/TextLayer.css'
 import './PdfViewer.css'
+import { forEachStemMatch } from './highlightStems'
+
+const EMPTY_STEMS: ReadonlySet<string> = new Set()
 
 const ZOOM_STEP = 0.25
 const ZOOM_MIN  = 0.25
@@ -21,11 +24,12 @@ interface Props {
   file: string
   startPage: number
   title: string
+  highlightStems?: ReadonlySet<string>
   onClose: () => void
   onPageChange?: (page: number) => void
 }
 
-export default function PdfViewer({ file, startPage, title, onClose, onPageChange }: Props) {
+export default function PdfViewer({ file, startPage, title, highlightStems = EMPTY_STEMS, onClose, onPageChange }: Props) {
   const [numPages, setNumPages]   = useState(0)
   const [left, setLeft]           = useState(() => toSpreadLeft(startPage))
   const [pageHeight, setPageHeight] = useState(0)
@@ -33,8 +37,32 @@ export default function PdfViewer({ file, startPage, title, onClose, onPageChang
   const [mode, setMode]           = useState<'pan' | 'select'>('pan')
   const bodyRef   = useRef<HTMLDivElement>(null)
   const docWrapRef = useRef<HTMLDivElement>(null)
+  const scrolledToHighlightRef = useRef(false)
 
-  useEffect(() => { onPageChange?.(left) }, [left, onPageChange])
+  const hasHighlight = highlightStems.size > 0
+  const renderHighlightedText = useCallback(
+    (item: { str: string }) => forEachStemMatch(item.str, highlightStems, (m) => `<span class="highlight">${m}</span>`),
+    [highlightStems],
+  )
+  // Fires once per rendered text layer; scrolls to the first highlighted
+  // match only the first time one appears (not on every page turn).
+  const handleTextLayerRendered = useCallback(() => {
+    if (scrolledToHighlightRef.current) return
+    const mark = docWrapRef.current?.querySelector('.highlight')
+    if (mark) {
+      mark.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+      scrolledToHighlightRef.current = true
+    }
+  }, [])
+
+  // Tracked via a ref rather than a dependency: onPageChange is an inline
+  // arrow function in App.tsx, recreated on every parent render, so
+  // depending on it directly would re-fire this on any unrelated parent
+  // re-render (e.g. while restoring state after a Back/Forward navigation)
+  // and clobber the URL with this page number using a stale pdfPath.
+  const onPageChangeRef = useRef(onPageChange)
+  useEffect(() => { onPageChangeRef.current = onPageChange })
+  useEffect(() => { onPageChangeRef.current?.(left) }, [left])
 
   const isCover = left === 1
   const right   = isCover ? null : left + 1
@@ -221,6 +249,8 @@ export default function PdfViewer({ file, startPage, title, onClose, onPageChang
                       height={effectiveHeight}
                       renderTextLayer
                       renderAnnotationLayer={false}
+                      customTextRenderer={hasHighlight ? renderHighlightedText : undefined}
+                      onRenderTextLayerSuccess={hasHighlight ? handleTextLayerRendered : undefined}
                     />
                   </div>
                   {!isCover && right && right <= numPages && (
@@ -230,6 +260,8 @@ export default function PdfViewer({ file, startPage, title, onClose, onPageChang
                         height={effectiveHeight}
                         renderTextLayer
                         renderAnnotationLayer={false}
+                        customTextRenderer={hasHighlight ? renderHighlightedText : undefined}
+                        onRenderTextLayerSuccess={hasHighlight ? handleTextLayerRendered : undefined}
                       />
                     </div>
                   )}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import './IssuesBrowser.css'
-import { listIssues, loadIssues, type Issue } from './searchIndex'
+import { listIssues, type Issue } from './searchIndex'
 
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
@@ -16,8 +16,8 @@ function formatReleaseDate(iso: string): string {
 }
 
 async function fetchIssues(startYear: number, endYear: number): Promise<Issue[]> {
-  const issues = await loadIssues()
-  return listIssues(issues).filter(
+  const issues = await listIssues()
+  return issues.filter(
     (issue) => issue.issue_year >= startYear && issue.issue_year <= endYear,
   )
 }

@@ -1,194 +1,72 @@
-// Client-side search over the extracted magazine pages: downloads pages.json
-// once and answers all queries in memory — no search backend required.
-// PDFs and cover images are downloaded once by extract_pages.py and served
-// directly from this server (dev: vite, prod: Nginx) under /pdfs and /covers.
-// Ranking is BM25F (see ./bm25Index.ts) built once per pages.json payload.
-import { buildIndex, queryIndex, type SearchIndex } from './bm25Index'
-import { tokenizeWithOffsets } from './textTokenize'
-import { stem } from './germanStemmer'
-
-export interface PageRecord {
-  page: number
-  title: string | null
-  text: string
-}
-
-export interface IssueRecord {
-  title: string
-  number: string | null
-  date: string // yyyy-MM-dd (real release date)
-  url: string
-  pdf: string
-  pdf_url: string
-  cover: string
-  cover_url: string
-  toc: string[]
-  pages: PageRecord[]
-}
-
-export interface Issue {
-  issue_id: string
-  pdf_path: string
-  cover_path: string | undefined
-  issue_title: string
-  issue_date: string
-  issue_year: number
-  issue_number: string | null
-  toc: string[]
-}
-
-export interface SearchHit {
-  id: string
-  pdf_path: string
-  issue_title: string
-  issue_date: string
-  issue_number: string | null
-  page: number
-  displayTitle: string
-  titleHtml: string
-  snippetHtml: string
-}
+// Main-thread client for the search index. All real work (fetching
+// pages.json, building the BM25F index, answering queries) happens inside a
+// Web Worker (searchWorker.ts / searchCore.ts) so the 18MB dataset and the
+// index build never block the UI. This module just posts typed requests and
+// awaits typed responses, correlated by an incrementing id.
+export type { IssueRecord, PageRecord, Issue, SearchHit } from './searchCore'
+import type { WorkerRequest, WorkerResponse, Issue, SearchHit } from './searchCore'
 
 export const RESULT_LIMIT = 20
-const SNIPPET_LENGTH = 260
 
-let cached: Promise<IssueRecord[]> | null = null
-const indexCache = new WeakMap<IssueRecord[], SearchIndex>()
+// Plain Omit<WorkerRequest, 'id'> doesn't distribute over the WorkerRequest
+// union (Pick/Omit key sets only ever include keys common to every member),
+// which would collapse every request down to just `{ type }` and drop
+// `query`/`path`/etc. This distributes Omit over each union member instead.
+type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never
 
-function getIndex(issues: IssueRecord[]): SearchIndex {
-  let index = indexCache.get(issues)
-  if (!index) {
-    index = buildIndex(issues)
-    indexCache.set(issues, index)
-  }
-  return index
-}
+let worker: Worker | null = null
+let nextId = 1
+const pending = new Map<number, { resolve: (v: WorkerResponse) => void; reject: (e: Error) => void }>()
 
-export function loadIssues(): Promise<IssueRecord[]> {
-  cached ??= fetch('/pages.json').then((res) => {
-    if (!res.ok) throw new Error(`pages.json: HTTP ${res.status}`)
-    return res.json() as Promise<IssueRecord[]>
-  })
-  return cached
-}
-
-// Same-origin path of the locally stored PDF (downloaded once by extract_pages.py).
-export function pdfPath(issue: IssueRecord): string {
-  return `/pdfs/${issue.pdf}`
-}
-
-// Same-origin path of the locally stored cover image — lets thumbnails
-// render without opening the PDF.
-export function coverPath(issue: IssueRecord): string | undefined {
-  return issue.cover ? `/covers/${issue.cover}` : undefined
-}
-
-export function findIssueByPdfPath(issues: IssueRecord[], path: string): IssueRecord | undefined {
-  return issues.find((issue) => pdfPath(issue) === path)
-}
-
-export function listIssues(issues: IssueRecord[]): Issue[] {
-  return issues
-    .map((issue) => ({
-      issue_id: issue.url,
-      pdf_path: pdfPath(issue),
-      cover_path: coverPath(issue),
-      issue_title: issue.title,
-      issue_date: issue.date,
-      issue_year: parseInt(issue.date, 10),
-      issue_number: issue.number,
-      toc: issue.toc,
-    }))
-    .sort((a, b) => b.issue_date.localeCompare(a.issue_date))
-}
-
-export function yearBounds(issues: IssueRecord[]): { min: number; max: number } {
-  if (!issues.length) throw new Error('pages.json is empty')
-  let min = Infinity
-  let max = -Infinity
-  for (const issue of issues) {
-    const year = parseInt(issue.date, 10)
-    if (year < min) min = year
-    if (year > max) max = year
-  }
-  return { min, max }
-}
-
-const HTML_ESCAPES: Record<string, string> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;',
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c])
-}
-
-// Wraps every token whose stem is in `acceptedStems` in <mark>, using the
-// original surface substring (never the stem) so display text is untouched.
-function highlight(text: string, acceptedStems: Set<string>): string {
-  const tokens = tokenizeWithOffsets(text)
-  let result = ''
-  let last = 0
-  for (const t of tokens) {
-    if (!acceptedStems.has(stem(t.token))) continue
-    result += escapeHtml(text.slice(last, t.start))
-    result += `<mark>${escapeHtml(text.slice(t.start, t.end))}</mark>`
-    last = t.end
-  }
-  result += escapeHtml(text.slice(last))
-  return result
-}
-
-function makeSnippet(text: string, acceptedStems: Set<string>): string {
-  const tokens = tokenizeWithOffsets(text)
-  let pos = -1
-  for (const t of tokens) {
-    if (acceptedStems.has(stem(t.token))) {
-      pos = t.start
-      break
+function getWorker(): Worker {
+  if (!worker) {
+    worker = new Worker(new URL('./searchWorker.ts', import.meta.url), { type: 'module' })
+    worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
+      const msg = e.data
+      const p = pending.get(msg.id)
+      if (!p) return
+      pending.delete(msg.id)
+      if (msg.type === 'error') p.reject(new Error(msg.error))
+      else p.resolve(msg)
     }
   }
-  let start = pos === -1 ? 0 : Math.max(0, pos - Math.floor(SNIPPET_LENGTH / 3))
-  if (start > 0) {
-    const wordBreak = text.indexOf(' ', start)
-    if (wordBreak !== -1 && wordBreak < start + 40) start = wordBreak + 1
-  }
-  let end = Math.min(text.length, start + SNIPPET_LENGTH)
-  if (end < text.length) {
-    const wordBreak = text.lastIndexOf(' ', end)
-    if (wordBreak > start) end = wordBreak
-  }
-  const fragment = text.slice(start, end).replace(/\s+/g, ' ')
-  return highlight(fragment, acceptedStems)
+  return worker
 }
 
-export function searchPages(
-  issues: IssueRecord[],
+function call<T extends WorkerResponse>(req: DistributiveOmit<WorkerRequest, 'id'>): Promise<T> {
+  const id = nextId++
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve: resolve as (v: WorkerResponse) => void, reject })
+    getWorker().postMessage({ id, ...req } as WorkerRequest)
+  })
+}
+
+// Kicks off the pages.json fetch + index build inside the worker. Not
+// required before calling the other functions (they await it internally),
+// but calling it once, unawaited, near app mount lets the worker start
+// warming up before the user finishes typing their first query.
+export function loadIssues(): Promise<void> {
+  return call({ type: 'loadIssues' }).then(() => undefined)
+}
+
+export async function searchPages(
   query: string,
   startYear: number,
   endYear: number,
-): { hits: SearchHit[]; total: number } {
-  const index = getIndex(issues)
-  const { rankedDocIds, total, acceptedStems } = queryIndex(index, query, startYear, endYear)
+): Promise<{ hits: SearchHit[]; total: number; highlightStems: Set<string> }> {
+  const res = await call<Extract<WorkerResponse, { type: 'search' }>>({ type: 'search', query, startYear, endYear })
+  return { hits: res.hits, total: res.total, highlightStems: new Set(res.highlightStems) }
+}
 
-  const hits: SearchHit[] = rankedDocIds.slice(0, RESULT_LIMIT).map((docId) => {
-    const { issue, page } = index.docMeta[docId]
-    const displayTitle = page.title ?? `Seite ${page.page}`
-    return {
-      id: `${issue.url}#${page.page}`,
-      pdf_path: pdfPath(issue),
-      issue_title: issue.title,
-      issue_date: issue.date,
-      issue_number: issue.number,
-      page: page.page,
-      displayTitle,
-      titleHtml: page.title ? highlight(page.title, acceptedStems) : escapeHtml(displayTitle),
-      snippetHtml: makeSnippet(page.text, acceptedStems),
-    }
-  })
+export async function listIssues(): Promise<Issue[]> {
+  return (await call<Extract<WorkerResponse, { type: 'listIssues' }>>({ type: 'listIssues' })).issues
+}
 
-  return { hits, total }
+export async function yearBounds(): Promise<{ min: number; max: number }> {
+  return (await call<Extract<WorkerResponse, { type: 'yearBounds' }>>({ type: 'yearBounds' })).bounds
+}
+
+export async function findIssueByPdfPath(path: string): Promise<Issue | undefined> {
+  return (await call<Extract<WorkerResponse, { type: 'findIssueByPdfPath' }>>({ type: 'findIssueByPdfPath', path }))
+    .issue
 }

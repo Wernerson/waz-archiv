@@ -1,8 +1,9 @@
 // In-browser BM25F search index over extracted magazine pages.
 // Built once per `issues` array (see `getIndex`) and queried per keystroke.
-import type { IssueRecord, PageRecord } from './searchIndex'
+import type { IssueRecord, PageRecord } from './searchCore'
 import { tokenize, tokenizeWithOffsets, type TokenOffset } from './textTokenize'
 import { stem } from './germanStemmer'
+import { STOPWORDS } from './germanStopwords'
 
 const K1 = 1.2
 const B_BODY = 0.75
@@ -132,7 +133,13 @@ export function parseQuery(raw: string): ParsedQuery {
     if (words.length) phrases.push(words)
   }
   const remainder = raw.replace(phraseRe, ' ')
-  const freeTerms = Array.from(new Set(tokenize(remainder).map(stem)))
+  const rawTerms = tokenize(remainder)
+  const contentTerms = rawTerms.filter((t) => !STOPWORDS.has(t))
+  // An all-stopword free-term query (e.g. "der die das") would otherwise be
+  // silently emptied and short-circuit to zero results in queryIndex —
+  // better to fall back to the unfiltered terms than to return nothing.
+  const effectiveTerms = contentTerms.length > 0 || rawTerms.length === 0 ? contentTerms : rawTerms
+  const freeTerms = Array.from(new Set(effectiveTerms.map(stem)))
   return { freeTerms, phrases }
 }
 
