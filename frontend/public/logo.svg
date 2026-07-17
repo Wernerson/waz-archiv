@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 240" width="100%" height="100%">
+  <defs>
+    <!-- Soft, organic drop shadow matching the original logo -->
+    <filter id="waz-shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="6" dy="4" stdDeviation="1" flood-color="#000000" flood-opacity="1"/>
+    </filter>
+  </defs>
+
+  <!-- Main Logo Group with Shadow applied -->
+  <g filter="url(#waz-shadow)" fill="#92b597">
+    
+    <!-- Letter 'W' -->
+    <path d="M 48 56 C 37 138 53 129 73 93 C 83 65 130 13 143 37 C 150 63 111 116 131 151 C 160 162 182 59 218 25 C 242 11 240 31 222 35 C 172 98 160 197 154 200 C 103 225 110 103 105 79 C 96 65 68 132 73 194 C 73 203 52 209 42 180 C 28 147 30 111 19 75 C 14 68 9 49 15 46 C 22 42 40 34 48 56 Z" />
+
+    <!-- Letter 'A' (Main Stem) -->
+    <path d="M 222 158 C 240 119 243 78 255 52 C 273 13 293 8 290 33 C 302 106 315 140 324 179 C 344 208 326 241 315 181 C 305 131 287 48 277 47 C 275 44 228 138 247 174 C 253 179 254 184 252 189 C 247 205 198 218 222 158 Z" />
+
+    <!-- Letter 'A' (Crossbar & Artistic Brush Dot) -->
+    <path d="M 316 128 C 310 134 211 160 189 174 C 175 180 174 201 218 172 C 264 154 300 151 337 136 C 353 126 346 105 316 128 Z" />
+
+    <!-- Letter 'Z' -->
+    <path d="M 360 98 C 326 100 310 62 341 53 C 405 58 430 49 477 44 C 486 47 494 49 496 61 C 465 109 418.6667 148.3333 378 196 C 573 178 590 195 566 199 C 467 189 413 204 387 210 C 344 229 356 215 363 198 C 418 124 446 131 463 78 C 417 74 391 92 361 98 Z" />
+             
+  </g>
+</svg>
