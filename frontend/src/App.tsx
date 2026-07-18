@@ -336,8 +336,8 @@ export default function App() {
                     <div
                       className="year-range-selection"
                       style={{
-                        left: `calc(${startPercent}% + var(--year-thumb-radius))`,
-                        width: `calc(${Math.max(0, endPercent - startPercent)}% - (var(--year-thumb-radius) * 2))`,
+                        left: `calc(${startPercent}%`,
+                        width: `calc(${Math.max(0, endPercent - startPercent)}%)`,
                       }}
                     />
                     <input
