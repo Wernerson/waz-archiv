@@ -28,7 +28,7 @@ USER_AGENT = "waz-archiv-indexer/0.1"
 
 # Contact/commerce vocabulary typical for ad blocks, incl. Swiss phone numbers.
 AD_KEYWORDS = re.compile(
-    r"(Tel\.|Telefon|Fax|www\.|GmbH|Inserat|Anzeige|Reklame|\b0\d{2}\s\d{3}\s\d{2}\s\d{2}\b)",
+    r"(Tel\.|Telefon|Fax|www\.|GmbH|Inserat|Anzeige|Anzeigen|Reklame|AG|www|\.ch|\.com|8637|8636|055|076|078|079|\b0\d{2}\s\d{3}\s\d{2}\s\d{2}\b)",
     re.IGNORECASE,
 )
 AD_MIN_HINTS = 3
