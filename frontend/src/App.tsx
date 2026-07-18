@@ -281,7 +281,7 @@ export default function App() {
     <div className="app">
       <header className="header">
         <div className="header-inner">
-          <h1>WAZ Archiv</h1>
+          <a href="/"><h1><img src="/logo.svg"  alt="Logo"/> Archiv</h1></a>
           <p className="subtitle">Durchsuche {yearBounds.max - yearBounds.min} Jahre Walder Zeitschrift!</p>
           <form className="search-form" onSubmit={handleSearch}>
             <input
