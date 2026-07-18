@@ -47,6 +47,9 @@ function serveDir(base: string): import('connect').NextHandleFunction {
 }
 
 export default defineConfig({
+  server: {
+    allowedHosts: ["waz-archiv.snb.li"],
+  },
   plugins: [
     react(),
     {
